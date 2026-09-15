@@ -86,6 +86,18 @@ void AcadosMpcSolver::setStageLateralBounds(int stage, double e_y_min, double e_
         pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, pimpl_->nlp_out, stage, "ubx", ubx_stage);
 }
 
+void AcadosMpcSolver::setStageControlBounds(int stage, double a_min, double a_max, 
+                                           double v_delta_min, double v_delta_max) {
+    if (!is_initialized_ || stage < 0 || stage >= MPC_N) return;
+
+    double lbu_stage[2] = {a_min, v_delta_min};
+    double ubu_stage[2] = {a_max, v_delta_max};
+    ocp_nlp_constraints_model_set(
+        pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, pimpl_->nlp_out, stage, "lbu", lbu_stage);
+    ocp_nlp_constraints_model_set(
+        pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, pimpl_->nlp_out, stage, "ubu", ubu_stage);
+}
+
 void AcadosMpcSolver::setStageReference(int stage, double v_ref, double e_y_ref, double e_psi_ref, 
                                        double delta_ref, double a_ref, double v_delta_ref) {
     if (!is_initialized_ || stage < 0 || stage > MPC_N) return;

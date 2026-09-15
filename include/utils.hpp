@@ -37,6 +37,23 @@ visualization_msgs::msg::Marker createPredictedPathMarker(
     rclcpp::Time now);
 
 /**
+ * @brief Creates a SPHERE_LIST Marker representing discrete predicted horizon states ("pallini").
+ * Color shifts smoothly from green (stage 1) to amber/yellow (stage N).
+ */
+visualization_msgs::msg::Marker createPredictedSpheresMarker(
+    const std::vector<double>& xs, 
+    const std::vector<double>& ys, 
+    rclcpp::Time now);
+
+/**
+ * @brief Creates a SPHERE_LIST Marker representing discrete reference track points ("pallini").
+ */
+visualization_msgs::msg::Marker createReferenceSpheresMarker(
+    const std::vector<double>& xs, 
+    const std::vector<double>& ys, 
+    rclcpp::Time now);
+
+/**
  * @brief Telemetry logger for MPC states, inputs, and solver solve times.
  */
 class MPCLogger {

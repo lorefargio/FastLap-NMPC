@@ -65,13 +65,13 @@ def create_ocp() -> AcadosOcp:
         model.x[4]       # delta
     )
 
-    # Cost weights
-    w_v       = 4.0      # Weight on tracking curvature-adjusted target speed
-    q_ey      = 35.0     # High penalty on lateral deviation to strictly stay centered between cones
-    q_epsi    = 12.0     # Alignment with track direction
-    r_delta   = 0.2      # Steering angle regularization
-    r_a       = 0.1      # Acceleration smoothness
-    r_vdelta  = 0.5      # Steering angular rate penalty (prevents chattering)
+    # Cost weights (Tuned for smooth, fluid tracking and zero straight-line weaving)
+    w_v       = 2.5      # Target speed weight
+    q_ey      = 15.0     # Damped lateral tracking penalty (stays centered without jerky over-correction)
+    q_epsi    = 18.0     # Heading tangent alignment penalty (keeps car pointed straight down track)
+    r_delta   = 0.30     # Steering angle regularization
+    r_a       = 0.40     # Longitudinal acceleration smoothness (penalizes harsh throttle snaps)
+    r_vdelta  = 2.50     # High steering rate penalty (forces smooth, fluid steering without left-right twitching)
 
     W = np.diag([w_v, q_ey, q_epsi, r_delta, r_a, r_vdelta])
     W_e = np.diag([w_v * 1.5, q_ey * 1.5, q_epsi * 1.5, r_delta])

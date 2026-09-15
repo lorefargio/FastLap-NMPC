@@ -47,7 +47,9 @@ private:
     rclcpp::Publisher<pacsim::msg::StampedScalar>::SharedPtr steering_pub_;
     rclcpp::Publisher<pacsim::msg::Wheels>::SharedPtr torques_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pred_path_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pred_spheres_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ref_path_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ref_spheres_pub_;
 
     // ROS Subscribers
     rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr centerline_sub_;
@@ -75,6 +77,7 @@ private:
     double current_speed_ = 0.0;
     double last_steering_angle_ = 0.0;
     double last_acceleration_cmd_ = 0.0;
+    double last_s_ = 0.0;
 
     // Node Parameters
     double control_dt_ = 0.01;
@@ -91,6 +94,13 @@ private:
     double max_straight_speed_ = 22.5;
     std::string speed_limits_csv_ = "";
     std::string centerline_topic_ = "/pacsim/track/centerline_raw_front";
+
+    // Launch & Corner Exit Acceleration Governor
+    double low_speed_threshold_ = 6.0;
+    double high_speed_threshold_ = 12.0;
+    double low_speed_max_accel_ = 1.6;
+    double corner_exit_steer_derate_ = 0.60;
+    double max_accel_slew_rate_ = 8.0;
 
     // Counters & Status Flags
     size_t control_loop_count_ = 0;

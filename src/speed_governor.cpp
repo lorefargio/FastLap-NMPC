@@ -233,4 +233,28 @@ double SpeedGovernor::computeEffectiveMu(double kappa) const {
     return ay / 9.81;
 }
 
+double SpeedGovernor::computeEffectiveMaxAccel(
+    double current_speed, double steering_angle,
+    double low_speed_thresh, double high_speed_thresh,
+    double low_speed_max_accel, double full_max_accel,
+    double steer_derate, double max_steer) const
+{
+    // 1. Low-speed ramp: limits max throttle kick on straights at low speed
+    double speed_ratio = 0.0;
+    if (current_speed <= low_speed_thresh) {
+        speed_ratio = 0.0;
+    } else if (current_speed >= high_speed_thresh) {
+        speed_ratio = 1.0;
+    } else {
+        speed_ratio = (current_speed - low_speed_thresh) / (high_speed_thresh - low_speed_thresh);
+    }
+    double base_accel = low_speed_max_accel + speed_ratio * (full_max_accel - low_speed_max_accel);
+
+    // 2. Corner-exit steering derating (traction control: throttle can only roll on as steering unwinds)
+    double steer_norm = std::clamp(std::abs(steering_angle) / max_steer, 0.0, 1.0);
+    double traction_factor = std::max(0.30, 1.0 - steer_derate * steer_norm);
+
+    return base_accel * traction_factor;
+}
+
 } // namespace mpc

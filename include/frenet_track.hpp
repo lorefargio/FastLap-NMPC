@@ -47,7 +47,8 @@ public:
     bool build(const std::vector<double>& x_vals, 
                const std::vector<double>& y_vals, 
                bool is_closed = false, 
-               double default_track_width = 3.0);
+               double default_track_width = 3.0,
+               bool apply_smoothing = true);
 
     /**
      * @brief Transforms global vehicle pose (x, y, psi) to Frenet frame.

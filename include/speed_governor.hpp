@@ -53,6 +53,24 @@ public:
     double computeEffectiveMu(double kappa) const;
 
     /**
+     * @brief Compute dynamic maximum allowable longitudinal acceleration.
+     * Prevents violent throttle snap on straights at low speed and preserves lateral grip on corner exit.
+     * @param current_speed Current vehicle speed [m/s].
+     * @param steering_angle Current wheel steering angle [rad].
+     * @param low_speed_thresh Speed threshold below which low-speed limit applies [m/s] (e.g. 6.0 m/s).
+     * @param high_speed_thresh Speed threshold above which full acceleration is unlocked [m/s] (e.g. 12.0 m/s).
+     * @param low_speed_max_accel Maximum acceleration at low speed [m/s^2] (e.g. 1.6 m/s^2).
+     * @param full_max_accel Full acceleration on high-speed straights [m/s^2] (e.g. 3.5 m/s^2).
+     * @param steer_derate Derating factor based on steering angle (0.0 to 1.0, e.g. 0.60).
+     * @param max_steer Maximum wheel steering angle [rad] (e.g. 0.52 rad).
+     */
+    double computeEffectiveMaxAccel(
+        double current_speed, double steering_angle,
+        double low_speed_thresh = 6.0, double high_speed_thresh = 12.0,
+        double low_speed_max_accel = 1.6, double full_max_accel = 3.5,
+        double steer_derate = 0.60, double max_steer = 0.52) const;
+
+    /**
      * @brief Get count of loaded empirical points.
      */
     size_t getTableSize() const { return speed_table_.size(); }

@@ -102,6 +102,86 @@ visualization_msgs::msg::Marker createPredictedPathMarker(
     return marker;
 }
 
+visualization_msgs::msg::Marker createPredictedSpheresMarker(
+    const std::vector<double>& xs, 
+    const std::vector<double>& ys, 
+    rclcpp::Time now)
+{
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = now;
+    marker.ns = "mpc/predicted_spheres";
+    marker.id = 2;
+    marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    // Sphere dimensions: 0.22m diameter "pallini"
+    marker.scale.x = 0.22;
+    marker.scale.y = 0.22;
+    marker.scale.z = 0.22;
+
+    size_t count = std::min(xs.size(), ys.size());
+    marker.points.reserve(count);
+    marker.colors.reserve(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        geometry_msgs::msg::Point p;
+        p.x = xs[i];
+        p.y = ys[i];
+        p.z = 0.18; // Elevated to clearly float above track surface
+        marker.points.push_back(p);
+
+        // Smooth gradient: bright neon green at k=0 to amber/yellow at horizon end
+        double frac = (count > 1) ? static_cast<double>(i) / static_cast<double>(count - 1) : 0.0;
+        std_msgs::msg::ColorRGBA col;
+        col.a = 0.95;
+        col.r = 0.1 + 0.9 * frac;
+        col.g = 1.0 - 0.15 * frac;
+        col.b = 0.2 * (1.0 - frac);
+        marker.colors.push_back(col);
+    }
+    return marker;
+}
+
+visualization_msgs::msg::Marker createReferenceSpheresMarker(
+    const std::vector<double>& xs, 
+    const std::vector<double>& ys, 
+    rclcpp::Time now)
+{
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = now;
+    marker.ns = "mpc/reference_spheres";
+    marker.id = 3;
+    marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    // Sphere dimensions: 0.18m diameter cyan "pallini"
+    marker.scale.x = 0.18;
+    marker.scale.y = 0.18;
+    marker.scale.z = 0.18;
+
+    size_t count = std::min(xs.size(), ys.size());
+    marker.points.reserve(count);
+    marker.colors.reserve(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        geometry_msgs::msg::Point p;
+        p.x = xs[i];
+        p.y = ys[i];
+        p.z = 0.08;
+        marker.points.push_back(p);
+
+        std_msgs::msg::ColorRGBA col;
+        col.a = 0.85;
+        col.r = 0.0;
+        col.g = 0.75;
+        col.b = 1.0;
+        marker.colors.push_back(col);
+    }
+    return marker;
+}
+
 // ============================================================================
 // MPCLogger Implementation
 // ============================================================================

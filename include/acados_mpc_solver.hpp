@@ -63,6 +63,12 @@ public:
     void setStageLateralBounds(int stage, double e_y_min, double e_y_max);
 
     /**
+     * @brief Updates control bounds (lbu, ubu on a and v_delta) for stage k.
+     */
+    void setStageControlBounds(int stage, double a_min, double a_max, 
+                               double v_delta_min = -1.5, double v_delta_max = 1.5);
+
+    /**
      * @brief Updates reference targets (yref) for stage k (e.g. curvature-based target velocity).
      */
     void setStageReference(int stage, double v_ref, double e_y_ref = 0.0, double e_psi_ref = 0.0, 

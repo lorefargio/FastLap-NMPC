@@ -38,6 +38,12 @@ MPCPacsimNode::MPCPacsimNode()
     this->declare_parameter("max_straight_speed", 22.5);
     this->declare_parameter("speed_limits_csv", "");
 
+    this->declare_parameter("low_speed_threshold", 6.0);
+    this->declare_parameter("high_speed_threshold", 12.0);
+    this->declare_parameter("low_speed_max_accel", 1.6);
+    this->declare_parameter("corner_exit_steer_derate", 0.60);
+    this->declare_parameter("max_accel_slew_rate", 8.0);
+
     // Get parameters
     double control_rate = this->get_parameter("control_rate").as_double();
     control_dt_ = 1.0 / control_rate;
@@ -54,6 +60,12 @@ MPCPacsimNode::MPCPacsimNode()
     speed_scale_ = this->get_parameter("speed_scale").as_double();
     max_straight_speed_ = this->get_parameter("max_straight_speed").as_double();
     speed_limits_csv_ = this->get_parameter("speed_limits_csv").as_string();
+
+    low_speed_threshold_ = this->get_parameter("low_speed_threshold").as_double();
+    high_speed_threshold_ = this->get_parameter("high_speed_threshold").as_double();
+    low_speed_max_accel_ = this->get_parameter("low_speed_max_accel").as_double();
+    corner_exit_steer_derate_ = this->get_parameter("corner_exit_steer_derate").as_double();
+    max_accel_slew_rate_ = this->get_parameter("max_accel_slew_rate").as_double();
 
     // Configure SpeedGovernor (from Velocità limite.xlsx)
     speed_governor_.configure(speed_scale_, max_straight_speed_);
@@ -99,8 +111,12 @@ MPCPacsimNode::MPCPacsimNode()
         "/pacsim/torques_max", 10);
     pred_path_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
         "/mpc/predicted_path", 1);
+    pred_spheres_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+        "/mpc/predicted_spheres", 1);
     ref_path_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
         "/mpc/reference_path", 1);
+    ref_spheres_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+        "/mpc/reference_spheres", 1);
 
     // Subscribers
     velocity_sub_ = this->create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
@@ -149,14 +165,33 @@ void MPCPacsimNode::centerlineCallback(const visualization_msgs::msg::MarkerArra
     auto [xs, ys] = utils::extractPointsFromMarkerArray(msg);
     if (xs.size() < 5 || xs.size() != ys.size()) return;
 
+    // Spline update gating:
+    // If we already have a long/global track (>80m), do not rebuild from front slices.
+    // If it's a rolling front window, only rebuild when remaining lookahead is < 15.0m.
+    if (track_received_) {
+        double track_len = track_.getTrackLength();
+        if (track_len > 80.0) {
+            return;
+        }
+        double remaining = track_len - last_s_;
+        if (remaining > 15.0) {
+            return;
+        }
+    }
+
     std::string input_frame = msg->markers.front().header.frame_id;
     if (input_frame.empty()) input_frame = "map";
 
     // If marker points are published in car frame or another frame, transform to map
     if (input_frame != "map") {
         try {
-            const auto tf_map_from_input = tf_buffer_.lookupTransform(
-                "map", input_frame, tf2::TimePointZero);
+            rclcpp::Time marker_stamp = msg->markers.front().header.stamp;
+            geometry_msgs::msg::TransformStamped tf_map_from_input;
+            if (tf_buffer_.canTransform("map", input_frame, marker_stamp, tf2::durationFromSec(0.02))) {
+                tf_map_from_input = tf_buffer_.lookupTransform("map", input_frame, marker_stamp);
+            } else {
+                tf_map_from_input = tf_buffer_.lookupTransform("map", input_frame, tf2::TimePointZero);
+            }
 
             tf2::Quaternion q(
                 tf_map_from_input.transform.rotation.x,
@@ -185,16 +220,27 @@ void MPCPacsimNode::centerlineCallback(const visualization_msgs::msg::MarkerArra
         }
     }
 
-    // Build or update reference track spline
-    if (track_.build(xs, ys, false, default_track_width_)) {
+    // Build or update reference track spline with Gaussian filter enabled
+    if (track_.build(xs, ys, false, default_track_width_, true)) {
         if (!track_received_) {
             track_received_ = true;
             control_timer_->reset();
             RCLCPP_INFO(this->get_logger(), "✓ Reference track received (Length: %.2f m). Control loop STARTED.", 
                 track_.getTrackLength());
         }
-        // Publish reference trajectory visualization
-        ref_path_pub_->publish(utils::createReferencePathMarker(xs, ys, this->now()));
+        // Publish smooth reference trajectory visualization (sampled every 0.25m from spline)
+        std::vector<double> smooth_rx, smooth_ry;
+        double tlen = track_.getTrackLength();
+        size_t n_samples = static_cast<size_t>(tlen / 0.25) + 1;
+        smooth_rx.reserve(n_samples);
+        smooth_ry.reserve(n_samples);
+        for (size_t i = 0; i < n_samples; ++i) {
+            double s_samp = std::min(i * 0.25, tlen);
+            auto [rx, ry, rpsi, rkappa] = track_.getReferencePoint(s_samp);
+            smooth_rx.push_back(rx);
+            smooth_ry.push_back(ry);
+        }
+        ref_path_pub_->publish(utils::createReferencePathMarker(smooth_rx, smooth_ry, this->now()));
     }
 }
 
@@ -231,14 +277,26 @@ void MPCPacsimNode::landmarksCallback(const pacsim::msg::Track::SharedPtr msg) {
         ys.push_back(0.5 * (blue_cones[i].y() + yellow_cones[closest_yellow].y()));
     }
 
-    if (track_.build(xs, ys, true, default_track_width_)) {
+    if (track_.build(xs, ys, true, default_track_width_, true)) {
         if (!track_received_) {
             track_received_ = true;
             control_timer_->reset();
             RCLCPP_INFO(this->get_logger(), "✓ Global landmarks track received (Length: %.2f m). Control loop STARTED.", 
                 track_.getTrackLength());
         }
-        ref_path_pub_->publish(utils::createReferencePathMarker(xs, ys, this->now()));
+        // Publish smooth reference trajectory visualization (sampled every 0.25m from spline)
+        std::vector<double> smooth_rx, smooth_ry;
+        double tlen = track_.getTrackLength();
+        size_t n_samples = static_cast<size_t>(tlen / 0.25) + 1;
+        smooth_rx.reserve(n_samples);
+        smooth_ry.reserve(n_samples);
+        for (size_t i = 0; i < n_samples; ++i) {
+            double s_samp = std::min(i * 0.25, tlen);
+            auto [rx, ry, rpsi, rkappa] = track_.getReferencePoint(s_samp);
+            smooth_rx.push_back(rx);
+            smooth_ry.push_back(ry);
+        }
+        ref_path_pub_->publish(utils::createReferencePathMarker(smooth_rx, smooth_ry, this->now()));
     }
 }
 
@@ -285,6 +343,7 @@ void MPCPacsimNode::controlLoop() {
     auto t_proj_start = std::chrono::high_resolution_clock::now();
     auto [s, e_y, e_psi, curvature] = track_.cartesianToFrenet(x_cart, y_cart, psi_cart);
     auto t_proj_end = std::chrono::high_resolution_clock::now();
+    last_s_ = s;
 
     // Heading error wrap-around safety
     e_psi = FrenetTrack::normalizeAngle(e_psi);
@@ -310,6 +369,13 @@ void MPCPacsimNode::controlLoop() {
     double bound_l = track_.getLeftWidth() - track_margin_;
     double bound_r = track_.getRightWidth() - track_margin_;
 
+    // Dynamic launch governor: reduces max acceleration on straights at low speed and derates with steering angle
+    double a_eff_max = speed_governor_.computeEffectiveMaxAccel(
+        current_speed_, last_steering_angle_,
+        low_speed_threshold_, high_speed_threshold_,
+        low_speed_max_accel_, max_accel_,
+        corner_exit_steer_derate_, 0.52);
+
     double v_target_current = max_straight_speed_;
 
     for (int k = 0; k <= MPC_N; ++k) {
@@ -319,7 +385,10 @@ void MPCPacsimNode::controlLoop() {
 
         // Compute empirical safe speed and effective tire friction from Velocità limite.xlsx
         double v_safe_k = speed_governor_.computeSafeSpeed(kappa_k);
-        double v_ref_k = std::clamp(v_safe_k, 3.5, max_straight_speed_);
+
+        // Acceleration-feasible speed profile: prevents sudden 22.5 m/s setpoint jump when exiting slow corners
+        double max_reachable_v = current_speed_ + a_eff_max * (k * mpc_dt_) + 0.5;
+        double v_ref_k = std::clamp(std::min(v_safe_k, max_reachable_v), 3.0, max_straight_speed_);
         double mu_k = speed_governor_.computeEffectiveMu(kappa_k);
 
         if (k == 0) {
@@ -328,6 +397,10 @@ void MPCPacsimNode::controlLoop() {
 
         solver_.setStageParameters(k, kappa_k, track_.getLeftWidth(), track_.getRightWidth(), mu_k);
         solver_.setStageReference(k, v_ref_k, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        if (k < MPC_N) {
+            solver_.setStageControlBounds(k, min_accel_, a_eff_max, -1.5, 1.5);
+        }
 
         if (k > 0) {
             solver_.setStageLateralBounds(k, -bound_r, bound_l);
@@ -360,7 +433,7 @@ void MPCPacsimNode::controlLoop() {
     }
 
     // Bound controls
-    a_opt = std::clamp(a_opt, min_accel_, max_accel_);
+    a_opt = std::clamp(a_opt, min_accel_, a_eff_max);
     delta_target = std::clamp(delta_target, -0.52, 0.52);
 
     // Convert wheel steering angle to steering wheel command
@@ -384,7 +457,7 @@ void MPCPacsimNode::controlLoop() {
 
     logger_.logDetailed(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_,
                         s, e_y, e_psi, curvature, v_target_current,
-                        a_opt, delta_target, steering_wheel_cmd,
+                        last_acceleration_cmd_, delta_target, steering_wheel_cmd,
                         t_fl, t_fr, t_rl, t_rr,
                         result.status, result.solve_time_us,
                         pred_ey_end, pred_v_end, friction_util);
@@ -394,7 +467,6 @@ void MPCPacsimNode::controlLoop() {
     }
 
     last_steering_angle_ = delta_target;
-    last_acceleration_cmd_ = a_opt;
 
     // 8. High-Resolution Per-Iteration Timing Metrics
     auto t_loop_end = std::chrono::high_resolution_clock::now();
@@ -438,27 +510,34 @@ std::tuple<double, double, double, double> MPCPacsimNode::publishControls(
     auto stamp = this->now();
     double t = (stamp - start_time_).seconds();
 
-    // 1. Steering setpoint
+    // 1. Acceleration slew-rate filtering (prevents violent torque step shocks at corner exit)
+    double max_delta_a = max_accel_slew_rate_ * control_dt_;
+    double a_filtered = std::clamp(acceleration, 
+                                   last_acceleration_cmd_ - max_delta_a, 
+                                   last_acceleration_cmd_ + max_delta_a);
+    last_acceleration_cmd_ = a_filtered;
+
+    // 2. Steering setpoint
     pacsim::msg::StampedScalar steer_msg;
     steer_msg.stamp = stamp;
     steer_msg.value = steering_wheel_rad;
     steering_pub_->publish(steer_msg);
 
-    // 2. Wheel Torques mapping (matching etdv_pid baseline)
+    // 3. Wheel Torques mapping (matching etdv_pid baseline)
     pacsim::msg::Wheels torque_msg;
     torque_msg.stamp = stamp;
 
     double t_fl = 0.0, t_fr = 0.0, t_rl = 0.0, t_rr = 0.0;
 
-    if (acceleration > 0.0) {
+    if (a_filtered > 0.0) {
         // Rear-Wheel Drive (RWD) acceleration
-        double norm_acc = std::clamp(acceleration / max_accel_, 0.0, 1.0);
+        double norm_acc = std::clamp(a_filtered / max_accel_, 0.0, 1.0);
         double torque = norm_acc * max_torque_;
         t_rl = torque;
         t_rr = torque;
     } else {
         // 4-Wheel Braking (60/40 Front/Rear bias with brake gain 7.5)
-        double norm_brake = std::clamp(std::abs(acceleration) / std::abs(min_accel_), 0.0, 1.0);
+        double norm_brake = std::clamp(std::abs(a_filtered) / std::abs(min_accel_), 0.0, 1.0);
         double brake_torque = -norm_brake * max_torque_ * 7.5;
         t_fl = brake_torque * 0.3;
         t_fr = brake_torque * 0.3;
@@ -472,7 +551,7 @@ std::tuple<double, double, double, double> MPCPacsimNode::publishControls(
     torque_msg.rr = t_rr;
     torques_pub_->publish(torque_msg);
 
-    logger_.logControl(t, acceleration, last_steering_angle_, steering_wheel_rad, t_fl, t_fr, t_rl, t_rr, solve_time_us);
+    logger_.logControl(t, a_filtered, last_steering_angle_, steering_wheel_rad, t_fl, t_fr, t_rl, t_rr, solve_time_us);
 
     return {t_fl, t_fr, t_rl, t_rr};
 }
@@ -493,23 +572,43 @@ void MPCPacsimNode::publishZeroControls() {
 }
 
 void MPCPacsimNode::publishVisualizations(const std::vector<StateVector>& predicted_states, double current_s) {
-    if (predicted_states.empty() || !track_.isReady()) return;
+    if (!track_.isReady()) return;
 
-    std::vector<double> x_pred, y_pred;
-    x_pred.reserve(predicted_states.size());
-    y_pred.reserve(predicted_states.size());
+    auto stamp = this->now();
 
-    for (const auto& x_k : predicted_states) {
-        double s_rel = x_k[0]; // Relative distance ahead along prediction horizon
-        double ey_k = x_k[1];
-        double epsi_k = x_k[2];
+    // 1. Predicted Horizon Line & Spheres ("pallini")
+    if (!predicted_states.empty()) {
+        std::vector<double> x_pred, y_pred;
+        x_pred.reserve(predicted_states.size());
+        y_pred.reserve(predicted_states.size());
 
-        auto [cx, cy, cpsi] = track_.frenetToCartesian(current_s + s_rel, ey_k, epsi_k);
-        x_pred.push_back(cx);
-        y_pred.push_back(cy);
+        for (const auto& x_k : predicted_states) {
+            double s_rel = x_k[0]; // Relative distance ahead along prediction horizon
+            double ey_k = x_k[1];
+            double epsi_k = x_k[2];
+
+            auto [cx, cy, cpsi] = track_.frenetToCartesian(current_s + s_rel, ey_k, epsi_k);
+            x_pred.push_back(cx);
+            y_pred.push_back(cy);
+        }
+
+        pred_path_pub_->publish(utils::createPredictedPathMarker(x_pred, y_pred, stamp));
+        pred_spheres_pub_->publish(utils::createPredictedSpheresMarker(x_pred, y_pred, stamp));
     }
 
-    pred_path_pub_->publish(utils::createPredictedPathMarker(x_pred, y_pred, this->now()));
+    // 2. Reference Horizon Preview Spheres ("pallini")
+    double preview_speed = std::max(current_speed_, 3.0);
+    std::vector<double> x_ref_horizon, y_ref_horizon;
+    x_ref_horizon.reserve(MPC_N + 1);
+    y_ref_horizon.reserve(MPC_N + 1);
+
+    for (int k = 0; k <= MPC_N; ++k) {
+        double s_k = current_s + k * preview_speed * mpc_dt_;
+        auto [rx, ry, rpsi, rkappa] = track_.getReferencePoint(s_k);
+        x_ref_horizon.push_back(rx);
+        y_ref_horizon.push_back(ry);
+    }
+    ref_spheres_pub_->publish(utils::createReferenceSpheresMarker(x_ref_horizon, y_ref_horizon, stamp));
 }
 
 } // namespace mpc

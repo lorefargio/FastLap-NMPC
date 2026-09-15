@@ -85,6 +85,46 @@ double CubicSpline1D::secondDerivative(double t) const {
     return 2.0 * c_[i] + 6.0 * d_[i] * dx;
 }
 
+namespace {
+
+std::vector<double> applyGaussianSmoothing(const std::vector<double>& vals, bool is_closed, int passes = 2) {
+    if (vals.size() < 5) return vals;
+    std::vector<double> cur = vals;
+    std::vector<double> next = vals;
+    size_t n = vals.size();
+
+    // 5-point binomial kernel: [1, 4, 6, 4, 1] / 16.0
+    constexpr double k[5] = {1.0/16.0, 4.0/16.0, 6.0/16.0, 4.0/16.0, 1.0/16.0};
+
+    for (int p = 0; p < passes; ++p) {
+        for (size_t i = 0; i < n; ++i) {
+            if (is_closed) {
+                double v = 0.0;
+                for (int j = -2; j <= 2; ++j) {
+                    int idx = (static_cast<int>(i) + j + static_cast<int>(n)) % static_cast<int>(n);
+                    v += k[j + 2] * cur[idx];
+                }
+                next[i] = v;
+            } else {
+                if (i >= 2 && i + 2 < n) {
+                    next[i] = k[0] * cur[i - 2] + k[1] * cur[i - 1] + k[2] * cur[i] +
+                              k[3] * cur[i + 1] + k[4] * cur[i + 2];
+                } else if (i == 1 && n > 3) {
+                    next[i] = 0.25 * cur[0] + 0.50 * cur[1] + 0.25 * cur[2];
+                } else if (i == n - 2 && n > 3) {
+                    next[i] = 0.25 * cur[n - 3] + 0.50 * cur[n - 2] + 0.25 * cur[n - 1];
+                } else {
+                    next[i] = cur[i];
+                }
+            }
+        }
+        cur = next;
+    }
+    return cur;
+}
+
+} // namespace
+
 // ============================================================================
 // FrenetTrack Implementation
 // ============================================================================
@@ -92,7 +132,8 @@ double CubicSpline1D::secondDerivative(double t) const {
 bool FrenetTrack::build(const std::vector<double>& x_vals, 
                         const std::vector<double>& y_vals, 
                         bool is_closed, 
-                        double default_track_width) 
+                        double default_track_width,
+                        bool apply_smoothing) 
 {
     if (x_vals.size() < 3 || x_vals.size() != y_vals.size()) {
         std::cerr << "[FrenetTrack] ERROR: Invalid input points size: " << x_vals.size() << std::endl;
@@ -103,17 +144,24 @@ bool FrenetTrack::build(const std::vector<double>& x_vals,
     is_closed_ = is_closed;
     nominal_half_width_ = default_track_width / 2.0;
 
+    std::vector<double> smooth_x = x_vals;
+    std::vector<double> smooth_y = y_vals;
+    if (apply_smoothing && num_points >= 5) {
+        smooth_x = applyGaussianSmoothing(x_vals, is_closed, 2);
+        smooth_y = applyGaussianSmoothing(y_vals, is_closed, 2);
+    }
+
     s_.resize(num_points);
     x_.resize(num_points);
     y_.resize(num_points);
 
     s_[0] = 0.0;
-    x_[0] = x_vals[0];
-    y_[0] = y_vals[0];
+    x_[0] = smooth_x[0];
+    y_[0] = smooth_y[0];
 
     for (size_t i = 1; i < num_points; ++i) {
-        x_[i] = x_vals[i];
-        y_[i] = y_vals[i];
+        x_[i] = smooth_x[i];
+        y_[i] = smooth_y[i];
         double ds = std::hypot(x_[i] - x_[i - 1], y_[i] - y_[i - 1]);
         s_[i] = s_[i - 1] + ds;
     }
@@ -215,22 +263,55 @@ std::tuple<double, double, double, double> FrenetTrack::cartesianToFrenet(
     int idx = findClosestSegment(x, y);
     int n = static_cast<int>(x_.size());
 
-    // Project onto segment (idx to idx+1)
-    int next_idx = (idx + 1 < n) ? (idx + 1) : idx;
+    // Check projection on both adjacent segments [idx-1, idx] and [idx, idx+1]
+    double best_s = s_[idx];
+    double min_dist_sq = (x_[idx] - x) * (x_[idx] - x) + (y_[idx] - y) * (y_[idx] - y);
 
-    double s_guess = s_[idx];
-    if (next_idx != idx) {
-        double vx = x_[next_idx] - x_[idx];
-        double vy = y_[next_idx] - y_[idx];
-        double seg_len = std::hypot(vx, vy);
-        if (seg_len > 1e-4) {
-            double proj = ((x - x_[idx]) * vx + (y - y_[idx]) * vy) / (seg_len * seg_len);
-            proj = std::clamp(proj, 0.0, 1.0);
-            s_guess = s_[idx] + proj * (s_[next_idx] - s_[idx]);
+    auto test_segment = [&](int i0, int i1) {
+        if (i0 < 0 || i1 >= n || i0 == i1) return;
+        double vx = x_[i1] - x_[i0];
+        double vy = y_[i1] - y_[i0];
+        double seg_len_sq = vx * vx + vy * vy;
+        if (seg_len_sq < 1e-6) return;
+
+        double proj = ((x - x_[i0]) * vx + (y - y_[i0]) * vy) / seg_len_sq;
+        proj = std::clamp(proj, 0.0, 1.0);
+        double qx = x_[i0] + proj * vx;
+        double qy = y_[i0] + proj * vy;
+        double d2 = (qx - x) * (qx - x) + (qy - y) * (qy - y);
+        if (d2 < min_dist_sq) {
+            min_dist_sq = d2;
+            best_s = s_[i0] + proj * (s_[i1] - s_[i0]);
+        }
+    };
+
+    if (idx > 0) {
+        test_segment(idx - 1, idx);
+    }
+    if (idx + 1 < n) {
+        test_segment(idx, idx + 1);
+    }
+
+    // 2-step Newton-Raphson refinement on the continuous spline
+    // Minimize f(s) = (x(s) - x) * x'(s) + (y(s) - y) * y'(s) = 0
+    double s_opt = best_s;
+    for (int iter = 0; iter < 2; ++iter) {
+        double xs = spline_x_(s_opt);
+        double ys = spline_y_(s_opt);
+        double dxs = spline_x_.derivative(s_opt);
+        double dys = spline_y_.derivative(s_opt);
+        double ddxs = spline_x_.secondDerivative(s_opt);
+        double ddys = spline_y_.secondDerivative(s_opt);
+
+        double f = (xs - x) * dxs + (ys - y) * dys;
+        double f_prime = (dxs * dxs + dys * dys) + (xs - x) * ddxs + (ys - y) * ddys;
+        if (std::abs(f_prime) > 0.1) {
+            double ds = -f / f_prime;
+            s_opt = std::clamp(s_opt + ds, 0.0, track_length_);
         }
     }
 
-    auto [ref_x, ref_y, ref_psi, kappa] = getReferencePoint(s_guess);
+    auto [ref_x, ref_y, ref_psi, kappa] = getReferencePoint(s_opt);
 
     // Vector from reference point to car position
     double dx = x - ref_x;
@@ -246,7 +327,7 @@ std::tuple<double, double, double, double> FrenetTrack::cartesianToFrenet(
     // Heading error relative to path tangent
     double e_psi = normalizeAngle(psi - ref_psi);
 
-    return {s_guess, e_y, e_psi, kappa};
+    return {s_opt, e_y, e_psi, kappa};
 }
 
 std::tuple<double, double, double> FrenetTrack::frenetToCartesian(

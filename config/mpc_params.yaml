@@ -25,3 +25,10 @@ mpc_controller:
     max_straight_speed: 22.5     # Top speed on straightaways [m/s] (81 km/h)
     speed_limits_csv: ""         # Optional CSV path (empty = use embedded table from Velocità limite.xlsx)
 
+    # Low-Speed & Corner Exit Launch Governor (eliminates corner-exit snaking / zig-zag)
+    low_speed_threshold: 6.0     # Speed [m/s] below which low-speed limit is active
+    high_speed_threshold: 12.0   # Speed [m/s] above which full acceleration is reached
+    low_speed_max_accel: 1.6     # Gentle max acceleration at low speed [m/s^2] (avoids violent throttle snap)
+    corner_exit_steer_derate: 0.60 # Derating factor based on steering angle at corner exit
+    max_accel_slew_rate: 8.0     # Maximum acceleration slew rate [m/s^3] (torque ramp smoothing)
+
