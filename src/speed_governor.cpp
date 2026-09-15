@@ -1,0 +1,236 @@
+#include "speed_governor.hpp"
+
+#include <cmath>
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+
+namespace mpc {
+
+SpeedGovernor::SpeedGovernor() {
+    initDefaultTables();
+}
+
+void SpeedGovernor::configure(double speed_scale, double max_straight_speed) {
+    speed_scale_ = std::clamp(speed_scale, 0.5, 1.2);
+    max_straight_speed_ = std::max(max_straight_speed, 5.0);
+}
+
+void SpeedGovernor::initDefaultTables() {
+    // Exact data extracted from Velocità limite.xlsx
+    // (kappa [1/m], v_max [m/s]) sorted by kappa ascending
+    speed_table_ = {
+        {0.033755, 22.4983}, // R = 29.63m -> 81.0 km/h
+        {0.034934, 21.9455}, // R = 28.63m -> 79.0 km/h
+        {0.036199, 21.1628}, // R = 27.63m -> 76.2 km/h
+        {0.036866, 21.1101}, // R = 27.13m -> 76.0 km/h
+        {0.039024, 20.2651}, // R = 25.63m -> 73.0 km/h
+        {0.039801, 19.9808}, // R = 25.12m -> 71.9 km/h
+        {0.040609, 19.6954}, // R = 24.63m -> 70.9 km/h
+        {0.041451, 19.4095}, // R = 24.12m -> 69.9 km/h
+        {0.042328, 19.0971}, // R = 23.63m -> 68.7 km/h
+        {0.044199, 18.5644}, // R = 22.62m -> 66.8 km/h
+        {0.045198, 18.2926}, // R = 22.12m -> 65.9 km/h
+        {0.046243, 17.9693}, // R = 21.62m -> 64.7 km/h
+        {0.047337, 17.6794}, // R = 21.13m -> 63.6 km/h
+        {0.048485, 17.3865}, // R = 20.62m -> 62.6 km/h
+        {0.050955, 16.7944}, // R = 19.63m -> 60.5 km/h
+        {0.052288, 16.4984}, // R = 19.12m -> 59.4 km/h
+        {0.053691, 16.1968}, // R = 18.63m -> 58.3 km/h
+        {0.055172, 15.8991}, // R = 18.13m -> 57.2 km/h
+        {0.056738, 15.7445}, // R = 17.62m -> 56.7 km/h
+        {0.058394, 15.2924}, // R = 17.13m -> 55.1 km/h
+        {0.060150, 15.1396}, // R = 16.63m -> 54.5 km/h
+        {0.066116, 14.2013}, // R = 15.12m -> 51.1 km/h
+        {0.070796, 13.5749}, // R = 14.13m -> 48.9 km/h
+        {0.073394, 13.2161}, // R = 13.63m -> 47.6 km/h
+        {0.076190, 12.9030}, // R = 13.13m -> 46.5 km/h
+        {0.082474, 12.0120}, // R = 12.13m -> 43.2 km/h
+        {0.089888, 11.5096}, // R = 11.12m -> 41.4 km/h
+        {0.098765, 10.9080}, // R = 10.13m -> 39.3 km/h
+        {0.103896, 10.6096}, // R =  9.63m -> 38.2 km/h
+        {0.109589, 10.3028}  // R =  9.13m -> 37.1 km/h
+    };
+
+    // Lateral acceleration table from Velocità limite.xlsx column E
+    // (kappa [1/m], a_y_max [m/s^2]) sorted by kappa ascending
+    accel_table_ = {
+        {0.053691, 16.9500}, // R = 18.63m -> 16.95 m/s^2 (1.73g)
+        {0.055172, 16.8800}, // R = 18.13m -> 16.88 m/s^2 (1.72g)
+        {0.056738, 16.8000}, // R = 17.62m -> 16.80 m/s^2 (1.71g)
+        {0.058394, 16.7200}, // R = 17.13m -> 16.72 m/s^2 (1.70g)
+        {0.060150, 16.6500}, // R = 16.63m -> 16.65 m/s^2 (1.70g)
+        {0.064000, 16.5000}, // R = 15.62m -> 16.50 m/s^2 (1.68g)
+        {0.066116, 16.4000}, // R = 15.12m -> 16.40 m/s^2 (1.67g)
+        {0.068376, 16.3500}, // R = 14.63m -> 16.35 m/s^2 (1.67g)
+        {0.070796, 16.2600}, // R = 14.13m -> 16.26 m/s^2 (1.66g)
+        {0.073394, 16.2000}, // R = 13.63m -> 16.20 m/s^2 (1.65g)
+        {0.076190, 16.1000}, // R = 13.13m -> 16.10 m/s^2 (1.64g)
+        {0.079208, 16.0500}, // R = 12.62m -> 16.05 m/s^2 (1.64g)
+        {0.082474, 15.9400}, // R = 12.13m -> 15.94 m/s^2 (1.62g)
+        {0.089888, 15.7800}, // R = 11.12m -> 15.78 m/s^2 (1.61g)
+        {0.098765, 15.6200}, // R = 10.13m -> 15.62 m/s^2 (1.59g)
+        {0.109589, 15.4600}, // R =  9.13m -> 15.46 m/s^2 (1.58g)
+        {0.115942, 15.3600}, // R =  8.63m -> 15.36 m/s^2 (1.57g)
+        {0.123077, 15.2500}  // R =  8.12m -> 15.25 m/s^2 (1.55g)
+    };
+}
+
+bool SpeedGovernor::loadFromCsv(const std::string& csv_path) {
+    if (csv_path.empty()) {
+        return false;
+    }
+
+    std::ifstream file(csv_path);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    std::string line;
+    // Skip header line
+    if (!std::getline(file, line)) {
+        return false;
+    }
+
+    std::vector<std::pair<double, double>> new_speed_table;
+    std::vector<std::pair<double, double>> new_accel_table;
+
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string token;
+        std::vector<std::string> tokens;
+        while (std::getline(ss, token, ',')) {
+            tokens.push_back(token);
+        }
+        if (tokens.size() < 3) continue;
+
+        try {
+            double kappa = std::stod(tokens[0]);
+            if (!tokens[2].empty()) {
+                double v_max = std::stod(tokens[2]);
+                new_speed_table.emplace_back(kappa, v_max);
+            }
+            if (tokens.size() >= 4 && !tokens[3].empty()) {
+                double ay = std::stod(tokens[3]);
+                new_accel_table.emplace_back(kappa, ay);
+            }
+        } catch (...) {
+            continue;
+        }
+    }
+
+    if (!new_speed_table.empty()) {
+        std::sort(new_speed_table.begin(), new_speed_table.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        speed_table_ = new_speed_table;
+    }
+
+    if (!new_accel_table.empty()) {
+        std::sort(new_accel_table.begin(), new_accel_table.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        accel_table_ = new_accel_table;
+    }
+
+    return (!speed_table_.empty());
+}
+
+double SpeedGovernor::computeSafeSpeed(double kappa) const {
+    double k = std::abs(kappa);
+
+    // 1. Straightaways (k near 0): Cap at maximum straightaway speed
+    if (k <= speed_table_.front().first) {
+        return std::min(max_straight_speed_, speed_table_.front().second) * speed_scale_;
+    }
+
+    // 2. Sharp hairpins (k > table max, R < 9.13m):
+    // Transition smoothly using mechanical tire grip limit: v = sqrt(ay_base / k)
+    // At k = 0.109589, ay_base = 10.3028^2 * 0.109589 = 11.632 m/s^2 (1.185g)
+    if (k >= speed_table_.back().first) {
+        constexpr double ay_base = 11.632;
+        double v_phys = std::sqrt(ay_base / k);
+        return v_phys * speed_scale_;
+    }
+
+    // 3. Piecewise linear monotonic interpolation across empirical table points
+    auto it = std::lower_bound(speed_table_.begin(), speed_table_.end(), k,
+                               [](const std::pair<double, double>& pt, double val) {
+                                   return pt.first < val;
+                               });
+
+    if (it == speed_table_.end()) {
+        return speed_table_.back().second * speed_scale_;
+    }
+    if (it == speed_table_.begin()) {
+        return speed_table_.front().second * speed_scale_;
+    }
+
+    auto prev = it - 1;
+    double k0 = prev->first;
+    double v0 = prev->second;
+    double k1 = it->first;
+    double v1 = it->second;
+
+    double frac = (k - k0) / (k1 - k0);
+    double v_interp = v0 + frac * (v1 - v0);
+
+    return v_interp * speed_scale_;
+}
+
+double SpeedGovernor::computeMaxLateralAccel(double kappa) const {
+    double k = std::abs(kappa);
+
+    if (accel_table_.empty()) {
+        return 15.0;
+    }
+
+    // 1. Straights and high speed (k < 0.053691, R > 18.6m):
+    // Aero downforce increases max grip up to ~17.5 m/s^2
+    if (k <= accel_table_.front().first) {
+        constexpr double ay_max_aero = 17.50;
+        double k_min = accel_table_.front().first;
+        double frac = std::clamp(1.0 - (k / k_min), 0.0, 1.0);
+        return accel_table_.front().second + frac * (ay_max_aero - accel_table_.front().second);
+    }
+
+    // 2. Sharp hairpins (k > 0.123077, R < 8.12m):
+    // Continues linearly towards baseline mechanical grip ~10.6 m/s^2 at k=0.31
+    if (k >= accel_table_.back().first) {
+        // Slope = (15.25 - 16.95) / (0.123077 - 0.053691) = -24.5 m/s^2 / (1/m)
+        constexpr double slope = -24.5;
+        double k_last = accel_table_.back().first;
+        double ay_last = accel_table_.back().second;
+        double ay_ext = ay_last + slope * (k - k_last);
+        return std::max(ay_ext, 9.81 * 0.95); // Minimum 0.95g mechanical grip
+    }
+
+    // 3. Piecewise linear interpolation
+    auto it = std::lower_bound(accel_table_.begin(), accel_table_.end(), k,
+                               [](const std::pair<double, double>& pt, double val) {
+                                   return pt.first < val;
+                               });
+
+    if (it == accel_table_.end()) {
+        return accel_table_.back().second;
+    }
+    if (it == accel_table_.begin()) {
+        return accel_table_.front().second;
+    }
+
+    auto prev = it - 1;
+    double k0 = prev->first;
+    double a0 = prev->second;
+    double k1 = it->first;
+    double a1 = it->second;
+
+    double frac = (k - k0) / (k1 - k0);
+    return a0 + frac * (a1 - a0);
+}
+
+double SpeedGovernor::computeEffectiveMu(double kappa) const {
+    double ay = computeMaxLateralAccel(kappa);
+    return ay / 9.81;
+}
+
+} // namespace mpc

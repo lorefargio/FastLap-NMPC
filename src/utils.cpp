@@ -120,8 +120,11 @@ bool MPCLogger::init(const std::string& log_dir) {
     main_log_.open(log_dir + "/mpc_main.log", std::ios::out | std::ios::trunc);
     state_log_.open(log_dir + "/mpc_state.csv", std::ios::out | std::ios::trunc);
     control_log_.open(log_dir + "/mpc_control.csv", std::ios::out | std::ios::trunc);
+    detailed_log_.open(log_dir + "/mpc_detailed.csv", std::ios::out | std::ios::trunc);
+    timing_log_.open(log_dir + "/mpc_timing.csv", std::ios::out | std::ios::trunc);
 
-    if (!main_log_.is_open() || !state_log_.is_open() || !control_log_.is_open()) {
+    if (!main_log_.is_open() || !state_log_.is_open() || !control_log_.is_open() ||
+        !detailed_log_.is_open() || !timing_log_.is_open()) {
         return false;
     }
 
@@ -131,6 +134,15 @@ bool MPCLogger::init(const std::string& log_dir) {
     control_log_ << "time,a_cmd,delta_rad,steer_wheel_rad,t_fl,t_fr,t_rl,t_rr,solve_time_us\n";
     control_log_ << std::fixed << std::setprecision(5);
 
+    detailed_log_ << "time,x,y,psi,v,yaw_rate,s,e_y,e_psi,kappa_ref,v_target,"
+                  << "a_cmd,delta_cmd,steer_wheel_cmd,t_fl,t_fr,t_rl,t_rr,"
+                  << "solver_status,solve_time_us,pred_ey_end,pred_v_end,friction_util\n";
+    detailed_log_ << std::fixed << std::setprecision(5);
+
+    timing_log_ << "iteration,time_sec,total_loop_ms,solver_ms,lin_time_ms,qp_time_ms,"
+                << "proj_us,horizon_us,publish_us,qp_iter,qp_status,solver_status\n";
+    timing_log_ << std::fixed << std::setprecision(5);
+
     return true;
 }
 
@@ -138,6 +150,8 @@ void MPCLogger::close() {
     if (main_log_.is_open()) main_log_.close();
     if (state_log_.is_open()) state_log_.close();
     if (control_log_.is_open()) control_log_.close();
+    if (detailed_log_.is_open()) detailed_log_.close();
+    if (timing_log_.is_open()) timing_log_.close();
 }
 
 void MPCLogger::logMain(const std::string& msg, double time) {
@@ -163,6 +177,45 @@ void MPCLogger::logControl(double t, double a_cmd, double delta_cmd, double stee
         control_log_ << t << "," << a_cmd << "," << delta_cmd << "," << steer_wheel_cmd << ","
                      << t_fl << "," << t_fr << "," << t_rl << "," << t_rr << ","
                      << solve_time_us << "\n";
+    }
+}
+
+void MPCLogger::logDetailed(double t, double x, double y, double psi, double v, double yaw_rate,
+                           double s, double e_y, double e_psi, double kappa_ref, double v_target,
+                           double a_cmd, double delta_cmd, double steer_wheel_cmd,
+                           double t_fl, double t_fr, double t_rl, double t_rr,
+                           int solver_status, double solve_time_us,
+                           double pred_ey_end, double pred_v_end, double friction_util)
+{
+    if (detailed_log_.is_open()) {
+        detailed_log_ << t << "," << x << "," << y << "," << psi << ","
+                      << v << "," << yaw_rate << "," << s << "," << e_y << ","
+                      << e_psi << "," << kappa_ref << "," << v_target << ","
+                      << a_cmd << "," << delta_cmd << "," << steer_wheel_cmd << ","
+                      << t_fl << "," << t_fr << "," << t_rl << "," << t_rr << ","
+                      << solver_status << "," << solve_time_us << ","
+                      << pred_ey_end << "," << pred_v_end << ","
+                      << friction_util << "\n";
+    }
+}
+
+void MPCLogger::logTiming(size_t iteration, double t_sec, double total_loop_ms, double solver_ms,
+                          double prep_lin_ms, double feedback_qp_ms, double proj_us, double horizon_us,
+                          double publish_us, int qp_iter, int qp_status, int solver_status)
+{
+    if (timing_log_.is_open()) {
+        timing_log_ << iteration << ","
+                    << t_sec << ","
+                    << total_loop_ms << ","
+                    << solver_ms << ","
+                    << prep_lin_ms << ","
+                    << feedback_qp_ms << ","
+                    << proj_us << ","
+                    << horizon_us << ","
+                    << publish_us << ","
+                    << qp_iter << ","
+                    << qp_status << ","
+                    << solver_status << "\n";
     }
 }
 

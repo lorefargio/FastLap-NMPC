@@ -20,7 +20,11 @@ using ParamVector   = std::array<double, MPC_NP>;
 
 struct MpcSolveResult {
     int status = 0;                     // 0 = Success, 1 = Failure
-    double solve_time_us = 0.0;         // Execution latency in microseconds
+    int qp_status = 0;                  // QP solver status
+    int qp_iter = 0;                    // Number of QP iterations
+    double solve_time_us = 0.0;         // Wall-clock solve latency in microseconds
+    double time_lin_ms = 0.0;           // Linearization / preparation phase latency in milliseconds
+    double time_qp_ms = 0.0;            // QP solution / feedback phase latency in milliseconds
     ControlVector optimal_u{0.0, 0.0};  // [a_opt, v_delta_opt]
     double target_steering_angle = 0.0; // Steering angle predicted for next step [rad]
     std::vector<StateVector> predicted_states;
@@ -57,6 +61,12 @@ public:
      * @brief Updates lateral error constraints (lbx, ubx on e_y) for stage k.
      */
     void setStageLateralBounds(int stage, double e_y_min, double e_y_max);
+
+    /**
+     * @brief Updates reference targets (yref) for stage k (e.g. curvature-based target velocity).
+     */
+    void setStageReference(int stage, double v_ref, double e_y_ref = 0.0, double e_psi_ref = 0.0, 
+                           double delta_ref = 0.0, double a_ref = 0.0, double v_delta_ref = 0.0);
 
     /**
      * @brief Executes the acados Real-Time Iteration (RTI) step.

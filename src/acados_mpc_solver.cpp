@@ -86,6 +86,21 @@ void AcadosMpcSolver::setStageLateralBounds(int stage, double e_y_min, double e_
         pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, pimpl_->nlp_out, stage, "ubx", ubx_stage);
 }
 
+void AcadosMpcSolver::setStageReference(int stage, double v_ref, double e_y_ref, double e_psi_ref, 
+                                       double delta_ref, double a_ref, double v_delta_ref) {
+    if (!is_initialized_ || stage < 0 || stage > MPC_N) return;
+
+    if (stage == MPC_N) {
+        double yref_e[4] = {v_ref, e_y_ref, e_psi_ref, delta_ref};
+        ocp_nlp_cost_model_set(
+            pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, stage, "yref", yref_e);
+    } else {
+        double yref[6] = {v_ref, e_y_ref, e_psi_ref, delta_ref, a_ref, v_delta_ref};
+        ocp_nlp_cost_model_set(
+            pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, stage, "yref", yref);
+    }
+}
+
 MpcSolveResult AcadosMpcSolver::solve() {
     MpcSolveResult result;
     if (!is_initialized_) {
@@ -100,6 +115,21 @@ MpcSolveResult AcadosMpcSolver::solve() {
 
     auto t1 = std::chrono::high_resolution_clock::now();
     result.solve_time_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+
+    // Query acados internal stage timings and QP statistics
+    double time_lin_s = 0.0;
+    double time_qp_s = 0.0;
+    int qp_iter = 0;
+    int qp_status = 0;
+    ocp_nlp_get(pimpl_->nlp_solver, "time_lin", &time_lin_s);
+    ocp_nlp_get(pimpl_->nlp_solver, "time_qp", &time_qp_s);
+    ocp_nlp_get(pimpl_->nlp_solver, "nlp_iter", &qp_iter);
+    ocp_nlp_get(pimpl_->nlp_solver, "qp_status", &qp_status);
+
+    result.time_lin_ms = time_lin_s * 1000.0;
+    result.time_qp_ms = time_qp_s * 1000.0;
+    result.qp_iter = qp_iter;
+    result.qp_status = qp_status;
 
     // Extract optimal control input at stage 0: u = [a, v_delta]
     ocp_nlp_out_get(

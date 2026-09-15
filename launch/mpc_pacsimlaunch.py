@@ -17,23 +17,35 @@ def getFullFilePath(name, dir, package='pacsim'):
 
 def generate_launch_description():
     # PACSim configuration
-    track_name = "FSE23_centerline.yaml"
+    track_name = "FSG23_centerline.yaml"
     track_frame = "map"
     realtime_ratio = 1.0
-    discipline = "autocross"
     xacro_file_name = 'separate_model.xacro'
     xacro_path = getFullFilePath(xacro_file_name, "urdf")
 
     # Launch arguments
+    discipline_arg = DeclareLaunchArgument(
+        "discipline",
+        default_value="trackdrive",
+        description="FS discipline: 'trackdrive' (10 laps) or 'autocross' (3 laps)"
+    )
+    centerline_topic_arg = DeclareLaunchArgument(
+        "centerline_topic",
+        default_value="/pacsim/track/centerline_raw_front",
+        description="Reference centerline topic: /pacsim/track/centerline_raw_front (cone midpoints) or /pacsim/track/centerline_smoothed_front"
+    )
     log_dir_arg = DeclareLaunchArgument(
         "log_dir",
         default_value="/workspace/MPC_logs",
         description="MPC logger output directory"
     )
+    default_mpc_params_path = os.path.join(
+        get_package_share_directory('etdv_mpc'), 'config', 'mpc_params.yaml'
+    )
     mpc_params_arg = DeclareLaunchArgument(
         "mpc_params",
-        default_value="",
-        description="Optional path to custom mpc_params.yaml"
+        default_value=default_mpc_params_path,
+        description="Path to mpc_params.yaml"
     )
     use_foxglove_arg = DeclareLaunchArgument(
         "use_foxglove",
@@ -41,6 +53,8 @@ def generate_launch_description():
         description="Whether to launch Foxglove Bridge for visualization"
     )
 
+    discipline = LaunchConfiguration("discipline")
+    centerline_topic = LaunchConfiguration("centerline_topic")
     log_dir = LaunchConfiguration("log_dir")
     mpc_params = LaunchConfiguration("mpc_params")
 
@@ -94,7 +108,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'use_sim_time': True}, 
-            {'publish_frequency': float(1000),
+            {'publish_frequency': float(50),
              'robot_description': Command(['xacro', ' ', xacro_path])}
         ],
         arguments=[xacro_path]
@@ -104,26 +118,37 @@ def generate_launch_description():
     def create_mpc_node(context, *args, **kwargs):
         mpc_params_path = mpc_params.perform(context).strip()
         resolved_log_dir = log_dir.perform(context).strip()
+        resolved_centerline_topic = centerline_topic.perform(context).strip()
 
-        parameters = [{
+        parameters = []
+        if mpc_params_path and os.path.isfile(mpc_params_path):
+            parameters.append(mpc_params_path)
+        else:
+            parameters.append({
+                'use_sim_time': True,
+                'control_rate': 100.0,
+                'mpc_dt': 0.05,
+                'max_torque_per_wheel': 100.0,
+                'outer_steering_ratio': 0.23,
+                'max_lateral_error': 3.0,
+                'emergency_stop': False,
+                'default_track_width': 3.0,
+                'track_margin': 0.90,
+                'effective_mu': 1.0,
+                'max_accel': 3.5,
+                'min_accel': -8.0,
+                'stop_on_trajectory_complete': False
+            })
+
+        overrides = {
             'use_sim_time': True,
-            'control_rate': 100.0,
-            'mpc_dt': 0.05,
-            'max_torque_per_wheel': 100.0,
-            'outer_steering_ratio': 0.23,
-            'max_lateral_error': 3.0,
-            'emergency_stop': False,
-            'log_dir': resolved_log_dir,
-            'default_track_width': 3.0,
-            'track_margin': 0.85,
-            'effective_mu': 1.0,
-            'max_accel': 3.5,
-            'min_accel': -8.0,
-            'stop_on_trajectory_complete': False
-        }]
+        }
+        if resolved_log_dir:
+            overrides['log_dir'] = resolved_log_dir
+        if resolved_centerline_topic:
+            overrides['centerline_topic'] = resolved_centerline_topic
 
-        if mpc_params_path:
-            parameters.insert(0, mpc_params_path)
+        parameters.append(overrides)
 
         mpc_node = Node(
             package='etdv_mpc',
@@ -136,6 +161,8 @@ def generate_launch_description():
         return [mpc_node]
 
     return LaunchDescription([
+        discipline_arg,
+        centerline_topic_arg,
         log_dir_arg,
         mpc_params_arg,
         use_foxglove_arg,

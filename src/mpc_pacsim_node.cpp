@@ -27,11 +27,16 @@ MPCPacsimNode::MPCPacsimNode()
     this->declare_parameter("emergency_stop", false);
     this->declare_parameter("log_dir", "/workspace/MPC_logs");
     this->declare_parameter("default_track_width", 3.0);
-    this->declare_parameter("track_margin", 0.85);
+    this->declare_parameter("track_margin", 0.90);
     this->declare_parameter("effective_mu", 1.0);
     this->declare_parameter("max_accel", 3.5);
     this->declare_parameter("min_accel", -8.0);
     this->declare_parameter("stop_on_trajectory_complete", false);
+    this->declare_parameter("centerline_topic", "/pacsim/track/centerline_raw_front");
+
+    this->declare_parameter("speed_scale", 0.90);
+    this->declare_parameter("max_straight_speed", 22.5);
+    this->declare_parameter("speed_limits_csv", "");
 
     // Get parameters
     double control_rate = this->get_parameter("control_rate").as_double();
@@ -45,6 +50,25 @@ MPCPacsimNode::MPCPacsimNode()
     effective_mu_ = this->get_parameter("effective_mu").as_double();
     max_accel_ = this->get_parameter("max_accel").as_double();
     min_accel_ = this->get_parameter("min_accel").as_double();
+    centerline_topic_ = this->get_parameter("centerline_topic").as_string();
+    speed_scale_ = this->get_parameter("speed_scale").as_double();
+    max_straight_speed_ = this->get_parameter("max_straight_speed").as_double();
+    speed_limits_csv_ = this->get_parameter("speed_limits_csv").as_string();
+
+    // Configure SpeedGovernor (from Velocità limite.xlsx)
+    speed_governor_.configure(speed_scale_, max_straight_speed_);
+    if (!speed_limits_csv_.empty()) {
+        if (speed_governor_.loadFromCsv(speed_limits_csv_)) {
+            RCLCPP_INFO(this->get_logger(), "SpeedGovernor: Loaded custom CSV: %s (%zu points)",
+                        speed_limits_csv_.c_str(), speed_governor_.getTableSize());
+        } else {
+            RCLCPP_WARN(this->get_logger(), "SpeedGovernor: Could not load %s, using embedded table (%zu points)",
+                        speed_limits_csv_.c_str(), speed_governor_.getTableSize());
+        }
+    } else {
+        RCLCPP_INFO(this->get_logger(), "SpeedGovernor: Using embedded table from 'Velocità limite.xlsx' (%zu points, scale=%.2f, max_v=%.1f m/s)",
+                    speed_governor_.getTableSize(), speed_scale_, max_straight_speed_);
+    }
 
     std::string log_dir = this->get_parameter("log_dir").as_string();
 
@@ -54,7 +78,14 @@ MPCPacsimNode::MPCPacsimNode()
     } else {
         logger_.logMain("=== ETDV NMPC PACSim Node Started ===", 0.0);
         logger_.logMain("Control rate: " + std::to_string(control_rate) + " Hz | MPC dt: " + std::to_string(mpc_dt_), 0.0);
+        logger_.logMain("Centerline topic: " + centerline_topic_ + " | Track margin: " + std::to_string(track_margin_) +
+                        " m | max_lateral_error: " + std::to_string(max_lateral_error_) + " m", 0.0);
+        logger_.logMain("SpeedGovernor: scale=" + std::to_string(speed_scale_) +
+                        " | max_straight=" + std::to_string(max_straight_speed_) + " m/s", 0.0);
     }
+
+    RCLCPP_INFO(this->get_logger(), "Config: max_lateral_error=%.2f m | track_margin=%.2f m | speed_scale=%.2f | centerline=%s",
+                max_lateral_error_, track_margin_, speed_scale_, centerline_topic_.c_str());
 
     // Initialize acados C solver
     if (!solver_.init()) {
@@ -75,9 +106,17 @@ MPCPacsimNode::MPCPacsimNode()
     velocity_sub_ = this->create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
         "/pacsim/velocity", 10, std::bind(&MPCPacsimNode::velocityCallback, this, std::placeholders::_1));
 
-    centerline_sub_ = this->create_subscription<visualization_msgs::msg::MarkerArray>(
-        "/pacsim/track/centerline_smoothed_front", 10, 
-        std::bind(&MPCPacsimNode::centerlineCallback, this, std::placeholders::_1));
+    if (centerline_topic_ == "/pacsim/track/landmarks") {
+        landmarks_sub_ = this->create_subscription<pacsim::msg::Track>(
+            centerline_topic_, 10,
+            std::bind(&MPCPacsimNode::landmarksCallback, this, std::placeholders::_1));
+        RCLCPP_INFO(this->get_logger(), "Subscribed to Track landmarks on: %s", centerline_topic_.c_str());
+    } else {
+        centerline_sub_ = this->create_subscription<visualization_msgs::msg::MarkerArray>(
+            centerline_topic_, 10, 
+            std::bind(&MPCPacsimNode::centerlineCallback, this, std::placeholders::_1));
+        RCLCPP_INFO(this->get_logger(), "Subscribed to Centerline MarkerArray on: %s", centerline_topic_.c_str());
+    }
 
     // Control timer
     control_timer_ = this->create_wall_timer(
@@ -159,7 +198,52 @@ void MPCPacsimNode::centerlineCallback(const visualization_msgs::msg::MarkerArra
     }
 }
 
+void MPCPacsimNode::landmarksCallback(const pacsim::msg::Track::SharedPtr msg) {
+    if (!msg || msg->left_lane.size() < 3 || msg->right_lane.size() < 3) return;
+
+    std::vector<Eigen::Vector2d> blue_cones, yellow_cones;
+    blue_cones.reserve(msg->left_lane.size());
+    yellow_cones.reserve(msg->right_lane.size());
+
+    for (const auto& lm : msg->left_lane) {
+        blue_cones.emplace_back(lm.pose.pose.position.x, lm.pose.pose.position.y);
+    }
+    for (const auto& lm : msg->right_lane) {
+        yellow_cones.emplace_back(lm.pose.pose.position.x, lm.pose.pose.position.y);
+    }
+
+    std::vector<double> xs, ys;
+    size_t n = blue_cones.size();
+    xs.reserve(n);
+    ys.reserve(n);
+
+    for (size_t i = 0; i < n; ++i) {
+        size_t closest_yellow = 0;
+        double min_dist = std::numeric_limits<double>::max();
+        for (size_t j = 0; j < yellow_cones.size(); ++j) {
+            double dist = (blue_cones[i] - yellow_cones[j]).norm();
+            if (dist < min_dist) {
+                min_dist = dist;
+                closest_yellow = j;
+            }
+        }
+        xs.push_back(0.5 * (blue_cones[i].x() + yellow_cones[closest_yellow].x()));
+        ys.push_back(0.5 * (blue_cones[i].y() + yellow_cones[closest_yellow].y()));
+    }
+
+    if (track_.build(xs, ys, true, default_track_width_)) {
+        if (!track_received_) {
+            track_received_ = true;
+            control_timer_->reset();
+            RCLCPP_INFO(this->get_logger(), "✓ Global landmarks track received (Length: %.2f m). Control loop STARTED.", 
+                track_.getTrackLength());
+        }
+        ref_path_pub_->publish(utils::createReferencePathMarker(xs, ys, this->now()));
+    }
+}
+
 void MPCPacsimNode::controlLoop() {
+    auto t_loop_start = std::chrono::high_resolution_clock::now();
     double current_time = (this->now() - start_time_).seconds();
 
     if (!track_received_ || !velocity_received_ || !solver_.isInitialized()) {
@@ -198,15 +282,19 @@ void MPCPacsimNode::controlLoop() {
     m.getRPY(roll, pitch, psi_cart);
 
     // 2. Project vehicle pose onto reference track spline
+    auto t_proj_start = std::chrono::high_resolution_clock::now();
     auto [s, e_y, e_psi, curvature] = track_.cartesianToFrenet(x_cart, y_cart, psi_cart);
+    auto t_proj_end = std::chrono::high_resolution_clock::now();
 
     // Heading error wrap-around safety
     e_psi = FrenetTrack::normalizeAngle(e_psi);
 
     // Lateral boundary safety check
     if (std::abs(e_y) > max_lateral_error_) {
-        RCLCPP_ERROR(this->get_logger(), "SAFETY: Lateral error limit exceeded: %.2f m! Emergency Stop.", e_y);
-        logger_.logMain("SAFETY: Lateral error limit exceeded: " + std::to_string(e_y), current_time);
+        RCLCPP_ERROR(this->get_logger(), "SAFETY: Lateral error limit exceeded: %.2f m (limit: %.2f m)! Emergency Stop.",
+                     e_y, max_lateral_error_);
+        logger_.logMain("SAFETY: Lateral error limit exceeded: " + std::to_string(e_y) +
+                        " (limit: " + std::to_string(max_lateral_error_) + " m)", current_time);
         this->set_parameter(rclcpp::Parameter("emergency_stop", true));
         publishZeroControls();
         return;
@@ -217,15 +305,35 @@ void MPCPacsimNode::controlLoop() {
     StateVector x0 = {0.0, e_y, e_psi, std::max(current_speed_, 0.5), last_steering_angle_};
     solver_.setInitialState(x0);
 
-    // 4. Update track curvature and boundaries along prediction horizon
+    // 4. Update track curvature, speed references, and boundaries along prediction horizon
     double preview_speed = std::max(current_speed_, 3.0);
+    double bound_l = track_.getLeftWidth() - track_margin_;
+    double bound_r = track_.getRightWidth() - track_margin_;
+
+    double v_target_current = max_straight_speed_;
+
     for (int k = 0; k <= MPC_N; ++k) {
         double s_stage = s + k * preview_speed * mpc_dt_;
         auto [rx, ry, rpsi, kappa_k] = track_.getReferencePoint(s_stage);
         kappa_k = std::clamp(kappa_k, -2.5, 2.5);
 
-        solver_.setStageParameters(k, kappa_k, track_.getLeftWidth(), track_.getRightWidth(), effective_mu_);
+        // Compute empirical safe speed and effective tire friction from Velocità limite.xlsx
+        double v_safe_k = speed_governor_.computeSafeSpeed(kappa_k);
+        double v_ref_k = std::clamp(v_safe_k, 3.5, max_straight_speed_);
+        double mu_k = speed_governor_.computeEffectiveMu(kappa_k);
+
+        if (k == 0) {
+            v_target_current = v_ref_k;
+        }
+
+        solver_.setStageParameters(k, kappa_k, track_.getLeftWidth(), track_.getRightWidth(), mu_k);
+        solver_.setStageReference(k, v_ref_k, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+        if (k > 0) {
+            solver_.setStageLateralBounds(k, -bound_r, bound_l);
+        }
     }
+    auto t_horizon_end = std::chrono::high_resolution_clock::now();
 
     // 5. Solve the Optimal Control Problem (Real-Time Iteration)
     auto result = solver_.solve();
@@ -259,20 +367,74 @@ void MPCPacsimNode::controlLoop() {
     double steering_wheel_cmd = delta_target / steering_ratio_;
 
     // Publish to PACSim
-    publishControls(steering_wheel_cmd, a_opt);
+    auto t_pub_start = std::chrono::high_resolution_clock::now();
+    auto [t_fl, t_fr, t_rl, t_rr] = publishControls(steering_wheel_cmd, a_opt, result.solve_time_us);
 
     // 7. Visualizations & Telemetry
     publishVisualizations(result.predicted_states, s);
+    auto t_pub_end = std::chrono::high_resolution_clock::now();
 
     double progress = (track_.getTrackLength() > 0.0) ? (s / track_.getTrackLength()) : 0.0;
     logger_.logState(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_, s, e_y, e_psi, progress);
 
+    double pred_ey_end = result.predicted_states.empty() ? 0.0 : result.predicted_states.back()[1];
+    double pred_v_end  = result.predicted_states.empty() ? 0.0 : result.predicted_states.back()[3];
+    double a_lat = current_speed_ * current_yaw_rate_;
+    double friction_util = std::hypot(a_opt, a_lat) / (effective_mu_ * 9.81);
+
+    logger_.logDetailed(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_,
+                        s, e_y, e_psi, curvature, v_target_current,
+                        a_opt, delta_target, steering_wheel_cmd,
+                        t_fl, t_fr, t_rl, t_rr,
+                        result.status, result.solve_time_us,
+                        pred_ey_end, pred_v_end, friction_util);
+
+    if (std::abs(e_y) > 1.0) {
+        logger_.logMain("WARNING: High lateral error e_y = " + std::to_string(e_y) + " m | v = " + std::to_string(current_speed_) + " m/s", current_time);
+    }
+
     last_steering_angle_ = delta_target;
     last_acceleration_cmd_ = a_opt;
+
+    // 8. High-Resolution Per-Iteration Timing Metrics
+    auto t_loop_end = std::chrono::high_resolution_clock::now();
+    double total_loop_ms = std::chrono::duration<double, std::milli>(t_loop_end - t_loop_start).count();
+    double solver_ms = result.solve_time_us / 1000.0;
+    double proj_us = std::chrono::duration<double, std::micro>(t_proj_end - t_proj_start).count();
+    double horizon_us = std::chrono::duration<double, std::micro>(t_horizon_end - t_proj_end).count();
+    double publish_us = std::chrono::duration<double, std::micro>(t_pub_end - t_pub_start).count();
+
+    logger_.logTiming(control_loop_count_, current_time, total_loop_ms, solver_ms,
+                      result.time_lin_ms, result.time_qp_ms,
+                      proj_us, horizon_us, publish_us,
+                      result.qp_iter, result.qp_status, result.status);
+
+    loop_time_sum_ms_ += total_loop_ms;
+    max_loop_time_ms_ = std::max(max_loop_time_ms_, total_loop_ms);
+    min_loop_time_ms_ = std::min(min_loop_time_ms_, total_loop_ms);
+    solve_time_sum_ms_ += solver_ms;
+    max_solve_time_ms_ = std::max(max_solve_time_ms_, solver_ms);
+
+    if (total_loop_ms > (control_dt_ * 1000.0)) {
+        overruns_count_++;
+    }
+
+    if (control_loop_count_ % 100 == 0) {
+        double avg_loop = loop_time_sum_ms_ / (control_loop_count_ + 1);
+        double avg_solve = solve_time_sum_ms_ / (control_loop_count_ + 1);
+        RCLCPP_INFO(this->get_logger(),
+            "[PERF #%zu] Loop: %.2f ms (avg: %.2f, max: %.2f) | Solver: %.2f ms (QP: %.2f, Lin: %.2f, iter: %d) | Budget: %.1f ms | Overruns: %zu",
+            control_loop_count_, total_loop_ms, avg_loop, max_loop_time_ms_,
+            solver_ms, result.time_qp_ms, result.time_lin_ms, result.qp_iter,
+            control_dt_ * 1000.0, overruns_count_);
+    }
+
     control_loop_count_++;
 }
 
-void MPCPacsimNode::publishControls(double steering_wheel_rad, double acceleration) {
+std::tuple<double, double, double, double> MPCPacsimNode::publishControls(
+    double steering_wheel_rad, double acceleration, double solve_time_us) 
+{
     auto stamp = this->now();
     double t = (stamp - start_time_).seconds();
 
@@ -310,7 +472,9 @@ void MPCPacsimNode::publishControls(double steering_wheel_rad, double accelerati
     torque_msg.rr = t_rr;
     torques_pub_->publish(torque_msg);
 
-    logger_.logControl(t, acceleration, last_steering_angle_, steering_wheel_rad, t_fl, t_fr, t_rl, t_rr, 0.0);
+    logger_.logControl(t, acceleration, last_steering_angle_, steering_wheel_rad, t_fl, t_fr, t_rl, t_rr, solve_time_us);
+
+    return {t_fl, t_fr, t_rl, t_rr};
 }
 
 void MPCPacsimNode::publishZeroControls() {

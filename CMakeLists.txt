@@ -96,6 +96,7 @@ add_executable(mpc_pacsim_node
   src/mpc_pacsim_node.cpp
   src/acados_mpc_solver.cpp
   src/frenet_track.cpp
+  src/speed_governor.cpp
   src/utils.cpp
   ${ACADOS_GENERATED_SOURCES}
 )

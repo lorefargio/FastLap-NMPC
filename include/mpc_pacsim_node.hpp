@@ -12,10 +12,12 @@
 // PACSim Messages
 #include "pacsim/msg/stamped_scalar.hpp"
 #include "pacsim/msg/wheels.hpp"
+#include "pacsim/msg/track.hpp"
 
 // Internal Modules
 #include "frenet_track.hpp"
 #include "acados_mpc_solver.hpp"
+#include "speed_governor.hpp"
 #include "utils.hpp"
 
 #include <memory>
@@ -32,11 +34,12 @@ public:
 private:
     // Callbacks
     void centerlineCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg);
+    void landmarksCallback(const pacsim::msg::Track::SharedPtr msg);
     void velocityCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg);
     void controlLoop();
 
     // Helpers
-    void publishControls(double steering_wheel_rad, double acceleration);
+    std::tuple<double, double, double, double> publishControls(double steering_wheel_rad, double acceleration, double solve_time_us);
     void publishZeroControls();
     void publishVisualizations(const std::vector<StateVector>& predicted_states, double current_s);
 
@@ -48,6 +51,7 @@ private:
 
     // ROS Subscribers
     rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr centerline_sub_;
+    rclcpp::Subscription<pacsim::msg::Track>::SharedPtr landmarks_sub_;
     rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr velocity_sub_;
 
     // ROS Timer & Time
@@ -61,6 +65,7 @@ private:
     // Core Controllers & Track
     FrenetTrack track_;
     AcadosMpcSolver solver_;
+    SpeedGovernor speed_governor_;
     utils::MPCLogger logger_;
 
     // Vehicle State
@@ -82,12 +87,24 @@ private:
     double effective_mu_ = 1.0;
     double max_accel_ = 3.5;
     double min_accel_ = -8.0;
+    double speed_scale_ = 0.90;
+    double max_straight_speed_ = 22.5;
+    std::string speed_limits_csv_ = "";
+    std::string centerline_topic_ = "/pacsim/track/centerline_raw_front";
 
     // Counters & Status Flags
     size_t control_loop_count_ = 0;
     bool velocity_received_ = false;
     bool track_received_ = false;
     bool is_shutting_down_ = false;
+
+    // Timing & Performance Statistics
+    double loop_time_sum_ms_ = 0.0;
+    double max_loop_time_ms_ = 0.0;
+    double min_loop_time_ms_ = 1e6;
+    double solve_time_sum_ms_ = 0.0;
+    double max_solve_time_ms_ = 0.0;
+    size_t overruns_count_ = 0;
 };
 
 } // namespace mpc

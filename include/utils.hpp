@@ -52,11 +52,22 @@ public:
                   double s, double e_y, double e_psi, double progress);
     void logControl(double t, double a_cmd, double delta_cmd, double steer_wheel_cmd,
                     double t_fl, double t_fr, double t_rl, double t_rr, double solve_time_us);
+    void logDetailed(double t, double x, double y, double psi, double v, double yaw_rate,
+                     double s, double e_y, double e_psi, double kappa_ref, double v_target,
+                     double a_cmd, double delta_cmd, double steer_wheel_cmd,
+                     double t_fl, double t_fr, double t_rl, double t_rr,
+                     int solver_status, double solve_time_us,
+                     double pred_ey_end, double pred_v_end, double friction_util);
+    void logTiming(size_t iteration, double t_sec, double total_loop_ms, double solver_ms,
+                   double prep_lin_ms, double feedback_qp_ms, double proj_us, double horizon_us,
+                   double publish_us, int qp_iter, int qp_status, int solver_status);
 
 private:
     std::ofstream main_log_;
     std::ofstream state_log_;
     std::ofstream control_log_;
+    std::ofstream detailed_log_;
+    std::ofstream timing_log_;
 };
 
 } // namespace utils

@@ -66,12 +66,12 @@ def create_ocp() -> AcadosOcp:
     )
 
     # Cost weights
-    w_v       = 20.0     # High weight on maximizing velocity (lap time minimization)
-    q_ey      = 0.3      # Low weight on lateral deviation (allows apex cutting & racing line)
-    q_epsi    = 1.5      # Alignment with track direction
-    r_delta   = 0.05     # Steering angle regularization
-    r_a       = 0.05     # Acceleration smoothness
-    r_vdelta  = 0.2      # Steering angular rate penalty (prevents chattering)
+    w_v       = 4.0      # Weight on tracking curvature-adjusted target speed
+    q_ey      = 35.0     # High penalty on lateral deviation to strictly stay centered between cones
+    q_epsi    = 12.0     # Alignment with track direction
+    r_delta   = 0.2      # Steering angle regularization
+    r_a       = 0.1      # Acceleration smoothness
+    r_vdelta  = 0.5      # Steering angular rate penalty (prevents chattering)
 
     W = np.diag([w_v, q_ey, q_epsi, r_delta, r_a, r_vdelta])
     W_e = np.diag([w_v * 1.5, q_ey * 1.5, q_epsi * 1.5, r_delta])
@@ -79,8 +79,8 @@ def create_ocp() -> AcadosOcp:
     ocp.cost.W = W
     ocp.cost.W_e = W_e
 
-    # Reference values (target maximum speed)
-    v_target = 22.0  # m/s (~80 km/h)
+    # Reference values (nominal maximum straight speed from Velocità limite.xlsx)
+    v_target = 22.5  # m/s (81.0 km/h)
     ocp.cost.yref = np.array([v_target, 0.0, 0.0, 0.0, 0.0, 0.0])
     ocp.cost.yref_e = np.array([v_target, 0.0, 0.0, 0.0])
 
@@ -89,8 +89,8 @@ def create_ocp() -> AcadosOcp:
     # =========================================================================
     # State box constraints: [e_y, v, delta]
     # States index: s=0, e_y=1, e_psi=2, v=3, delta=4
-    # Track margin: car half-width (0.7m) + safety margin (0.15m) = 0.85m
-    car_margin = 0.85
+    # Track margin: car half-width (0.7m) + safety margin (0.20m) = 0.90m
+    car_margin = 0.90
     e_y_min = - (w_r_init - car_margin)
     e_y_max =   (w_l_init - car_margin)
 
@@ -100,10 +100,10 @@ def create_ocp() -> AcadosOcp:
 
     # Soft constraints on lateral error (e_y) to guarantee QP feasibility
     ocp.constraints.idxsbx = np.array([0])  # Soften e_y (first element of idxbx)
-    ocp.cost.zl = np.array([100.0])         # L1 penalty
-    ocp.cost.zu = np.array([100.0])
-    ocp.cost.Zl = np.array([500.0])         # L2 penalty
-    ocp.cost.Zu = np.array([500.0])
+    ocp.cost.zl = np.array([200.0])         # L1 penalty
+    ocp.cost.zu = np.array([200.0])
+    ocp.cost.Zl = np.array([1000.0])        # L2 penalty
+    ocp.cost.Zu = np.array([1000.0])
 
     # Input box constraints: [a, v_delta]
     ocp.constraints.idxbu = np.array([0, 1])
