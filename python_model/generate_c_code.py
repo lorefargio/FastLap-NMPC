@@ -149,7 +149,7 @@ def create_ocp() -> AcadosOcp:
     q_epsi    = 18.0     # Heading tangent alignment penalty
     r_delta   = 0.30     # Steering angle regularization
     r_a       = 0.40     # Longitudinal acceleration smoothness
-    r_vdelta  = 2.50     # High steering rate penalty (forces smooth fluid steering)
+    r_vdelta  = 3.50     # High steering rate penalty (forces smooth fluid steering)
 
     W = np.diag([w_v, q_ey, q_epsi, r_delta, r_a, r_vdelta])
     W_e = np.diag([w_v * 1.5, q_ey * 1.5, q_epsi * 1.5, r_delta])

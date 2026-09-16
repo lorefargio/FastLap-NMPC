@@ -130,17 +130,20 @@ MpcSolveResult AcadosMpcSolver::solve() {
     // Query acados internal stage timings and QP statistics
     double time_lin_s = 0.0;
     double time_qp_s = 0.0;
+    double cost_val = 0.0;
     int qp_iter = 0;
     int qp_status = 0;
     ocp_nlp_get(pimpl_->nlp_solver, "time_lin", &time_lin_s);
     ocp_nlp_get(pimpl_->nlp_solver, "time_qp", &time_qp_s);
     ocp_nlp_get(pimpl_->nlp_solver, "nlp_iter", &qp_iter);
     ocp_nlp_get(pimpl_->nlp_solver, "qp_status", &qp_status);
+    ocp_nlp_get(pimpl_->nlp_solver, "cost_value", &cost_val);
 
     result.time_lin_ms = time_lin_s * 1000.0;
     result.time_qp_ms = time_qp_s * 1000.0;
     result.qp_iter = qp_iter;
     result.qp_status = qp_status;
+    result.cost_value = cost_val;
 
     // Extract optimal control input at stage 0: u = [a, v_delta]
     ocp_nlp_out_get(
@@ -156,7 +159,10 @@ MpcSolveResult AcadosMpcSolver::solve() {
     }
 
     // Next predicted steering angle: state index 4 (delta) at stage 1
-    result.target_steering_angle = result.predicted_states[1][4];
+    if (result.predicted_states.size() > 1) {
+        result.target_steering_angle = result.predicted_states[1][4];
+        result.predicted_x1 = result.predicted_states[1];
+    }
 
     return result;
 }

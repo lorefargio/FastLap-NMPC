@@ -416,13 +416,14 @@ void MPCPacsimNode::controlLoop() {
     // 6. Extract Optimal Actuation with robust fallback
     double a_opt = 0.0;
     double delta_target = last_steering_angle_;
+    double delta_dyn = 0.0;
 
     if (result.status == 0 || result.status == 2) {
         a_opt = result.optimal_u[0];
         delta_target = result.target_steering_angle;
 
         // Dynamic slip angle compensation for tire cornering compliance at speed
-        double delta_dyn = understeer_gradient_ * (current_speed_ * current_speed_ * curvature);
+        delta_dyn = understeer_gradient_ * (current_speed_ * current_speed_ * curvature);
         delta_target += delta_dyn;
 
         if (std::isnan(a_opt) || std::isinf(a_opt) || std::isnan(delta_target) || std::isinf(delta_target)) {
@@ -453,20 +454,112 @@ void MPCPacsimNode::controlLoop() {
     publishVisualizations(result.predicted_states, s);
     auto t_pub_end = std::chrono::high_resolution_clock::now();
 
-    double progress = (track_.getTrackLength() > 0.0) ? (s / track_.getTrackLength()) : 0.0;
-    logger_.logState(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_, s, e_y, e_psi, progress);
+    double track_len = track_.getTrackLength();
+    if (track_len > 0.0) {
+        if (s < last_s_raw_ - 0.5 * track_len) {
+            current_lap_idx_++;
+        }
+        last_s_raw_ = s;
+    }
+    double s_lap = (track_len > 0.0) ? std::fmod(s, track_len) : s;
+    if (s_lap < 0.0 && track_len > 0.0) s_lap += track_len;
+    double progress = (track_len > 0.0) ? (s_lap / track_len) : 0.0;
 
     double pred_ey_end = result.predicted_states.empty() ? 0.0 : result.predicted_states.back()[1];
     double pred_v_end  = result.predicted_states.empty() ? 0.0 : result.predicted_states.back()[3];
     double a_lat = current_speed_ * current_yaw_rate_;
-    double friction_util = std::hypot(a_opt, a_lat) / (effective_mu_ * 9.81);
+    double a_lon = last_acceleration_cmd_;
+    double a_total = std::hypot(a_lon, a_lat);
+    double mu_g = effective_mu_ * 9.81;
+    double friction_util_pct = (mu_g > 1e-3) ? (a_total / mu_g * 100.0) : 0.0;
+    double friction_headroom = mu_g - a_total;
 
+    double w_l = track_.getLeftWidth();
+    double w_r = track_.getRightWidth();
+    double clearance_left = w_l - e_y;
+    double clearance_right = w_r + e_y;
+    double min_cone_clearance = std::min(clearance_left, clearance_right);
+
+    double dt = std::max(control_dt_, 1e-4);
+    double jerk_lon = (last_acceleration_cmd_ - prev_filtered_accel_) / dt;
+    double jerk_steer = (steering_wheel_cmd - prev_steering_wheel_cmd_) / dt;
+    prev_filtered_accel_ = last_acceleration_cmd_;
+    prev_steering_wheel_cmd_ = steering_wheel_cmd;
+
+    double error_pred_ey = 0.0;
+    double error_pred_v = 0.0;
+    if (has_prev_prediction_) {
+        error_pred_ey = std::abs(e_y - prev_predicted_x1_[1]);
+        error_pred_v = std::abs(current_speed_ - prev_predicted_x1_[3]);
+    }
+    prev_predicted_x1_ = result.predicted_x1;
+    has_prev_prediction_ = true;
+
+    int gating_mode = 0;
+    if (current_speed_ < 1.0 && std::abs(last_steering_angle_) < 0.08) {
+        gating_mode = 2; // Standing launch
+    } else if (current_speed_ < high_speed_threshold_) {
+        gating_mode = 1; // Low-speed traction gating
+    }
+
+    utils::MPCLogger::TelemetryData td;
+    td.time = current_time;
+    td.lap_idx = current_lap_idx_;
+    td.s_lap = s_lap;
+    td.progress_pct = progress * 100.0;
+    td.x = x_cart;
+    td.y = y_cart;
+    td.psi = psi_cart;
+    td.v = current_speed_;
+    td.yaw_rate = current_yaw_rate_;
+    td.e_y = e_y;
+    td.e_psi = e_psi;
+    td.kappa_ref = curvature;
+    td.w_l = w_l;
+    td.w_r = w_r;
+    td.clearance_left = clearance_left;
+    td.clearance_right = clearance_right;
+    td.min_cone_clearance = min_cone_clearance;
+    td.v_target = v_target_current;
+    td.delta_v = v_target_current - current_speed_;
+    td.a_eff_max = a_eff_max;
+    td.gating_mode = gating_mode;
+    td.a_lon = a_lon;
+    td.a_lat = a_lat;
+    td.a_total = a_total;
+    td.friction_util_pct = friction_util_pct;
+    td.friction_headroom = friction_headroom;
+    td.delta_cmd = delta_target;
+    td.steer_wheel_cmd = steering_wheel_cmd;
+    td.delta_dot = result.optimal_u[1];
+    td.delta_dyn_offset = delta_dyn;
+    td.jerk_lon = jerk_lon;
+    td.jerk_steer = jerk_steer;
+    td.t_fl = t_fl;
+    td.t_fr = t_fr;
+    td.t_rl = t_rl;
+    td.t_rr = t_rr;
+    td.solver_status = result.status;
+    td.solve_time_us = result.solve_time_us;
+    td.lin_time_ms = result.time_lin_ms;
+    td.qp_time_ms = result.time_qp_ms;
+    td.qp_iter = result.qp_iter;
+    td.cost_value = result.cost_value;
+    td.pred_ey_end = pred_ey_end;
+    td.pred_v_end = pred_v_end;
+    td.pred_ey_1 = result.predicted_x1[1];
+    td.pred_v_1 = result.predicted_x1[3];
+    td.error_pred_ey = error_pred_ey;
+    td.error_pred_v = error_pred_v;
+
+    logger_.logTelemetry(td);
+    logger_.logState(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_, s, e_y, e_psi, progress);
     logger_.logDetailed(current_time, x_cart, y_cart, psi_cart, current_speed_, current_yaw_rate_,
                         s, e_y, e_psi, curvature, v_target_current,
                         last_acceleration_cmd_, delta_target, steering_wheel_cmd,
                         t_fl, t_fr, t_rl, t_rr,
                         result.status, result.solve_time_us,
-                        pred_ey_end, pred_v_end, friction_util);
+                        pred_ey_end, pred_v_end, friction_util_pct / 100.0);
 
     if (std::abs(e_y) > 1.0) {
         logger_.logMain("WARNING: High lateral error e_y = " + std::to_string(e_y) + " m | v = " + std::to_string(current_speed_) + " m/s", current_time);
@@ -502,9 +595,9 @@ void MPCPacsimNode::controlLoop() {
         double avg_loop = loop_time_sum_ms_ / (control_loop_count_ + 1);
         double avg_solve = solve_time_sum_ms_ / (control_loop_count_ + 1);
         RCLCPP_INFO(this->get_logger(),
-            "[PERF #%zu] Loop: %.2f ms (avg: %.2f, max: %.2f) | Solver: %.2f ms (QP: %.2f, Lin: %.2f, iter: %d) | Budget: %.1f ms | Overruns: %zu",
+            "[PERF #%zu] Loop: %.2f ms (avg: %.2f, max: %.2f) | Solver: %.2f ms (avg: %.2f, QP: %.2f, Lin: %.2f, iter: %d) | Budget: %.1f ms | Overruns: %zu",
             control_loop_count_, total_loop_ms, avg_loop, max_loop_time_ms_,
-            solver_ms, result.time_qp_ms, result.time_lin_ms, result.qp_iter,
+            solver_ms, avg_solve, result.time_qp_ms, result.time_lin_ms, result.qp_iter,
             control_dt_ * 1000.0, overruns_count_);
     }
 

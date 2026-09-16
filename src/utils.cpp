@@ -202,9 +202,10 @@ bool MPCLogger::init(const std::string& log_dir) {
     control_log_.open(log_dir + "/mpc_control.csv", std::ios::out | std::ios::trunc);
     detailed_log_.open(log_dir + "/mpc_detailed.csv", std::ios::out | std::ios::trunc);
     timing_log_.open(log_dir + "/mpc_timing.csv", std::ios::out | std::ios::trunc);
+    telemetry_log_.open(log_dir + "/mpc_telemetry.csv", std::ios::out | std::ios::trunc);
 
     if (!main_log_.is_open() || !state_log_.is_open() || !control_log_.is_open() ||
-        !detailed_log_.is_open() || !timing_log_.is_open()) {
+        !detailed_log_.is_open() || !timing_log_.is_open() || !telemetry_log_.is_open()) {
         return false;
     }
 
@@ -223,6 +224,14 @@ bool MPCLogger::init(const std::string& log_dir) {
                 << "proj_us,horizon_us,publish_us,qp_iter,qp_status,solver_status\n";
     timing_log_ << std::fixed << std::setprecision(5);
 
+    telemetry_log_ << "time,lap_idx,s_lap,progress_pct,x,y,psi,v,yaw_rate,e_y,e_psi,kappa_ref,"
+                   << "w_l,w_r,clearance_left,clearance_right,min_cone_clearance,v_target,delta_v,"
+                   << "a_eff_max,gating_mode,a_lon,a_lat,a_total,friction_util_pct,friction_headroom,"
+                   << "delta_cmd,steer_wheel_cmd,delta_dot,delta_dyn_offset,jerk_lon,jerk_steer,"
+                   << "t_fl,t_fr,t_rl,t_rr,solver_status,solve_time_us,lin_time_ms,qp_time_ms,"
+                   << "qp_iter,cost_value,pred_ey_end,pred_v_end,pred_ey_1,pred_v_1,error_pred_ey,error_pred_v\n";
+    telemetry_log_ << std::fixed << std::setprecision(5);
+
     return true;
 }
 
@@ -232,6 +241,7 @@ void MPCLogger::close() {
     if (control_log_.is_open()) control_log_.close();
     if (detailed_log_.is_open()) detailed_log_.close();
     if (timing_log_.is_open()) timing_log_.close();
+    if (telemetry_log_.is_open()) telemetry_log_.close();
 }
 
 void MPCLogger::logMain(const std::string& msg, double time) {
@@ -296,6 +306,59 @@ void MPCLogger::logTiming(size_t iteration, double t_sec, double total_loop_ms, 
                     << qp_iter << ","
                     << qp_status << ","
                     << solver_status << "\n";
+    }
+}
+
+void MPCLogger::logTelemetry(const TelemetryData& d) {
+    if (telemetry_log_.is_open()) {
+        telemetry_log_ << d.time << ","
+                       << d.lap_idx << ","
+                       << d.s_lap << ","
+                       << d.progress_pct << ","
+                       << d.x << ","
+                       << d.y << ","
+                       << d.psi << ","
+                       << d.v << ","
+                       << d.yaw_rate << ","
+                       << d.e_y << ","
+                       << d.e_psi << ","
+                       << d.kappa_ref << ","
+                       << d.w_l << ","
+                       << d.w_r << ","
+                       << d.clearance_left << ","
+                       << d.clearance_right << ","
+                       << d.min_cone_clearance << ","
+                       << d.v_target << ","
+                       << d.delta_v << ","
+                       << d.a_eff_max << ","
+                       << d.gating_mode << ","
+                       << d.a_lon << ","
+                       << d.a_lat << ","
+                       << d.a_total << ","
+                       << d.friction_util_pct << ","
+                       << d.friction_headroom << ","
+                       << d.delta_cmd << ","
+                       << d.steer_wheel_cmd << ","
+                       << d.delta_dot << ","
+                       << d.delta_dyn_offset << ","
+                       << d.jerk_lon << ","
+                       << d.jerk_steer << ","
+                       << d.t_fl << ","
+                       << d.t_fr << ","
+                       << d.t_rl << ","
+                       << d.t_rr << ","
+                       << d.solver_status << ","
+                       << d.solve_time_us << ","
+                       << d.lin_time_ms << ","
+                       << d.qp_time_ms << ","
+                       << d.qp_iter << ","
+                       << d.cost_value << ","
+                       << d.pred_ey_end << ","
+                       << d.pred_v_end << ","
+                       << d.pred_ey_1 << ","
+                       << d.pred_v_1 << ","
+                       << d.error_pred_ey << ","
+                       << d.error_pred_v << "\n";
     }
 }
 

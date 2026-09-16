@@ -114,6 +114,14 @@ private:
     bool track_received_ = false;
     bool is_shutting_down_ = false;
 
+    // Diagnostic & Telemetry Framework State
+    size_t current_lap_idx_ = 0;
+    double last_s_raw_ = 0.0;
+    double prev_filtered_accel_ = 0.0;
+    double prev_steering_wheel_cmd_ = 0.0;
+    StateVector prev_predicted_x1_{0.0, 0.0, 0.0, 0.0, 0.0};
+    bool has_prev_prediction_ = false;
+
     // Timing & Performance Statistics
     double loop_time_sum_ms_ = 0.0;
     double max_loop_time_ms_ = 0.0;

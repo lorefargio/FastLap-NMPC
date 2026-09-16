@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(fastlap_mpc)
+project(etdv_mpc)
 
 # ==============================================================================
 # Compiler Flags & Optimization
@@ -120,6 +120,11 @@ target_link_libraries(mpc_pacsim_node
   blasfeo
   m
   pthread
+)
+
+set_target_properties(mpc_pacsim_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "${ACADOS_DIR}/lib"
 )
 
 # ==============================================================================

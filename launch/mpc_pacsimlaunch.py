@@ -18,13 +18,17 @@ def getFullFilePath(name, dir, package='pacsim'):
 
 def generate_launch_description():
     # PACSim configuration
-    track_name = "FSE23_centerline.yaml"
     track_frame = "map"
     realtime_ratio = 1.0
     xacro_file_name = 'separate_model.xacro'
     xacro_path = getFullFilePath(xacro_file_name, "urdf")
 
     # Launch arguments
+    track_name_arg = DeclareLaunchArgument(
+        "track_name",
+        default_value="FSE23_centerline.yaml",
+        description="Track file name in pacsim tracks dir (e.g. FSE23_centerline.yaml, FSG21_centerline.yaml, FSE24_centerline.yaml) or full path"
+    )
     discipline_arg = DeclareLaunchArgument(
         "discipline",
         default_value="trackdrive",
@@ -67,41 +71,6 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("use_foxglove"))
     )
 
-    # PACSim Simulator Node
-    nodePacsim = Node(
-        package='pacsim',
-        namespace='pacsim',
-        executable='pacsim_node',
-        name='pacsim_node',
-        parameters=[
-            {'use_sim_time': True}, 
-            {"track_name": getFullFilePath(track_name, "tracks")}, 
-            {"grip_map_path": getFullFilePath("gripMap.yaml", "tracks")}, 
-            {"track_frame": track_frame}, 
-            {"realtime_ratio": realtime_ratio}, 
-            {"report_file_dir": "/tmp"}, 
-            {"main_config_path": getFullFilePath("mainConfig.yaml", dir="config")}, 
-            {"perception_config_path": getFullFilePath("perception.yaml", dir="config")}, 
-            {"sensors_config_path": getFullFilePath("sensors.yaml", dir="config")}, 
-            {"vehicle_model_config_path": getFullFilePath("vehicleModel.yaml", dir="config")}, 
-            {"lidar_config_path": getFullFilePath("lidar.yaml", dir="config")}, 
-            {"discipline": discipline}
-        ],
-        output="screen",
-        emulate_tty=True
-    )
-
-    # Shutdown handler
-    nodePacsimShutdownEventHandler = RegisterEventHandler(
-        OnProcessExit(
-            target_action=nodePacsim,
-            on_exit=[
-                LogInfo(msg=('PACSim closed')),
-                EmitEvent(event=Shutdown(reason='PACSim closed, shutting down.')),
-            ]
-        )
-    )
-
     # Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -116,11 +85,53 @@ def generate_launch_description():
         arguments=[xacro_path]
     )
 
-    # ETDV MPC Controller Node
-    def create_mpc_node(context, *args, **kwargs):
+    # Dynamic PACSim Simulator & MPC Controller Nodes
+    def create_simulation_and_mpc_nodes(context, *args, **kwargs):
+        track_val = LaunchConfiguration("track_name").perform(context).strip()
+        if os.path.isabs(track_val):
+            resolved_track_path = track_val
+        else:
+            resolved_track_path = getFullFilePath(track_val, "tracks")
+
+        resolved_discipline = discipline.perform(context).strip()
         mpc_params_path = mpc_params.perform(context).strip()
         resolved_log_dir = log_dir.perform(context).strip()
         resolved_centerline_topic = centerline_topic.perform(context).strip()
+
+        # PACSim Simulator Node
+        nodePacsim = Node(
+            package='pacsim',
+            namespace='pacsim',
+            executable='pacsim_node',
+            name='pacsim_node',
+            parameters=[
+                {'use_sim_time': True}, 
+                {"track_name": resolved_track_path}, 
+                {"grip_map_path": getFullFilePath("gripMap.yaml", "tracks")}, 
+                {"track_frame": track_frame}, 
+                {"realtime_ratio": realtime_ratio}, 
+                {"report_file_dir": "/tmp"}, 
+                {"main_config_path": getFullFilePath("mainConfig.yaml", dir="config")}, 
+                {"perception_config_path": getFullFilePath("perception.yaml", dir="config")}, 
+                {"sensors_config_path": getFullFilePath("sensors.yaml", dir="config")}, 
+                {"vehicle_model_config_path": getFullFilePath("vehicleModel.yaml", dir="config")}, 
+                {"lidar_config_path": getFullFilePath("lidar.yaml", dir="config")}, 
+                {"discipline": resolved_discipline}
+            ],
+            output="screen",
+            emulate_tty=True
+        )
+
+        # Shutdown handler
+        nodePacsimShutdownEventHandler = RegisterEventHandler(
+            OnProcessExit(
+                target_action=nodePacsim,
+                on_exit=[
+                    LogInfo(msg=('PACSim closed')),
+                    EmitEvent(event=Shutdown(reason='PACSim closed, shutting down.')),
+                ]
+            )
+        )
 
         parameters = []
         if mpc_params_path and os.path.isfile(mpc_params_path):
@@ -160,17 +171,17 @@ def generate_launch_description():
             emulate_tty=True,
             parameters=parameters
         )
-        return [mpc_node]
+
+        return [nodePacsim, nodePacsimShutdownEventHandler, mpc_node]
 
     return LaunchDescription([
+        track_name_arg,
         discipline_arg,
         centerline_topic_arg,
         log_dir_arg,
         mpc_params_arg,
         use_foxglove_arg,
         foxglove_bridge_launch,
-        nodePacsim,
-        nodePacsimShutdownEventHandler,
         robot_state_publisher,
-        OpaqueFunction(function=create_mpc_node)
+        OpaqueFunction(function=create_simulation_and_mpc_nodes)
     ])

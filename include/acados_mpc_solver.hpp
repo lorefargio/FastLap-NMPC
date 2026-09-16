@@ -25,8 +25,10 @@ struct MpcSolveResult {
     double solve_time_us = 0.0;         // Wall-clock solve latency in microseconds
     double time_lin_ms = 0.0;           // Linearization / preparation phase latency in milliseconds
     double time_qp_ms = 0.0;            // QP solution / feedback phase latency in milliseconds
+    double cost_value = 0.0;            // OCP optimal objective function value J
     ControlVector optimal_u{0.0, 0.0};  // [a_opt, v_delta_opt]
     double target_steering_angle = 0.0; // Steering angle predicted for next step [rad]
+    StateVector predicted_x1{0.0, 0.0, 0.0, 0.0, 0.0}; // 1-step-ahead predicted state
     std::vector<StateVector> predicted_states;
 };
 
