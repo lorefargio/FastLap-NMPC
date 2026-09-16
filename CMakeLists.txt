@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(etdv_mpc)
+project(fastlap_mpc)
 
 # ==============================================================================
 # Compiler Flags & Optimization

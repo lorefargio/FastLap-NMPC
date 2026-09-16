@@ -1,11 +1,12 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>etdv_mpc</name>
+  <name>fastlap_mpc</name>
   <version>0.1.0</version>
   <description>Real-Time Minimum Lap Time Non-Linear MPC in Frenet Coordinates with acados for PACSim</description>
-  <maintainer email="samuele.citi2003@gmail.com">samu</maintainer>
+  <maintainer email="lore@todo.todo">lore</maintainer>
   <license>MIT</license>
+
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
