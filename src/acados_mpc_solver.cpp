@@ -73,13 +73,12 @@ void AcadosMpcSolver::setStageParameters(int stage, double kappa, double w_l, do
     kinematic_frenet_acados_update_params(pimpl_->capsule, stage, p, 4);
 }
 
-void AcadosMpcSolver::setStageLateralBounds(int stage, double e_y_min, double e_y_max) {
-    if (!is_initialized_ || stage <= 0 || stage > MPC_N) return;
+void AcadosMpcSolver::setStageLateralBounds(int stage, double e_y_min, double e_y_max, double v_max) {
+    if (!is_initialized_ || stage <= 0 || stage >= MPC_N) return;
 
-    // Update box constraint on e_y (idxbx = [1, 3, 4] -> e_y is first entry)
-    // Note: Acados constraints allow setting lbx / ubx subvectors
+    // Update box constraints: idxbx = [1, 3, 4] -> e_y (0), v (1), delta (2)
     double lbx_stage[3] = {e_y_min, 0.0, -0.52};
-    double ubx_stage[3] = {e_y_max, 25.0, 0.52};
+    double ubx_stage[3] = {e_y_max, v_max, 0.52};
     ocp_nlp_constraints_model_set(
         pimpl_->nlp_config, pimpl_->nlp_dims, pimpl_->nlp_in, pimpl_->nlp_out, stage, "lbx", lbx_stage);
     ocp_nlp_constraints_model_set(

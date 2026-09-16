@@ -18,62 +18,38 @@ MPCPacsimNode::MPCPacsimNode()
     start_time_ = this->now();
     RCLCPP_INFO(this->get_logger(), "=== Initializing ETDV NMPC PACSim Node ===");
 
-    // Parameter declarations
-    this->declare_parameter("control_rate", 100.0);
-    this->declare_parameter("mpc_dt", 0.05);
-    this->declare_parameter("max_torque_per_wheel", 100.0);
-    this->declare_parameter("outer_steering_ratio", 0.23);
-    this->declare_parameter("max_lateral_error", 3.0);
+    // Parameter declarations & loading (type-safe for both float and integer YAML values)
     this->declare_parameter("emergency_stop", false);
-    this->declare_parameter("log_dir", "/workspace/MPC_logs");
-    this->declare_parameter("default_track_width", 3.0);
-    this->declare_parameter("track_margin", 0.90);
-    this->declare_parameter("effective_mu", 1.0);
-    this->declare_parameter("max_accel", 3.5);
-    this->declare_parameter("min_accel", -8.0);
     this->declare_parameter("stop_on_trajectory_complete", false);
+    this->declare_parameter("log_dir", "/workspace/MPC_logs");
     this->declare_parameter("centerline_topic", "/pacsim/track/centerline_smoothed");
-
-    this->declare_parameter("speed_scale", 0.90);
-    this->declare_parameter("max_straight_speed", 22.5);
     this->declare_parameter("speed_limits_csv", "");
 
-    this->declare_parameter("low_speed_threshold", 7.0);
-    this->declare_parameter("high_speed_threshold", 13.0);
-    this->declare_parameter("standing_launch_accel", 2.8);
-    this->declare_parameter("low_speed_max_accel", 0.85);
-    this->declare_parameter("corner_exit_steer_derate", 0.75);
-    this->declare_parameter("max_accel_slew_rate", 6.0);
-    this->declare_parameter("max_decel_slew_rate", 25.0);
-    this->declare_parameter("a_brake", 5.8);
-    this->declare_parameter("understeer_gradient", 0.0012);
-
-    // Get parameters
-    double control_rate = this->get_parameter("control_rate").as_double();
+    double control_rate = declareAndGetDoubleParam("control_rate", 100.0);
     control_dt_ = 1.0 / control_rate;
-    mpc_dt_ = this->get_parameter("mpc_dt").as_double();
-    max_torque_ = this->get_parameter("max_torque_per_wheel").as_double();
-    steering_ratio_ = this->get_parameter("outer_steering_ratio").as_double();
-    max_lateral_error_ = this->get_parameter("max_lateral_error").as_double();
-    default_track_width_ = this->get_parameter("default_track_width").as_double();
-    track_margin_ = this->get_parameter("track_margin").as_double();
-    effective_mu_ = this->get_parameter("effective_mu").as_double();
-    max_accel_ = this->get_parameter("max_accel").as_double();
-    min_accel_ = this->get_parameter("min_accel").as_double();
-    centerline_topic_ = this->get_parameter("centerline_topic").as_string();
-    speed_scale_ = this->get_parameter("speed_scale").as_double();
-    max_straight_speed_ = this->get_parameter("max_straight_speed").as_double();
-    speed_limits_csv_ = this->get_parameter("speed_limits_csv").as_string();
+    mpc_dt_ = declareAndGetDoubleParam("mpc_dt", 0.05);
+    max_torque_ = declareAndGetDoubleParam("max_torque_per_wheel", 100.0);
+    steering_ratio_ = declareAndGetDoubleParam("outer_steering_ratio", 0.23);
+    max_lateral_error_ = declareAndGetDoubleParam("max_lateral_error", 3.0);
+    default_track_width_ = declareAndGetDoubleParam("default_track_width", 3.0);
+    track_margin_ = declareAndGetDoubleParam("track_margin", 0.90);
+    effective_mu_ = declareAndGetDoubleParam("effective_mu", 1.0);
+    max_accel_ = declareAndGetDoubleParam("max_accel", 3.5);
+    min_accel_ = declareAndGetDoubleParam("min_accel", -8.0);
+    speed_scale_ = declareAndGetDoubleParam("speed_scale", 0.90);
+    max_straight_speed_ = declareAndGetDoubleParam("max_straight_speed", 22.5);
+    low_speed_threshold_ = declareAndGetDoubleParam("low_speed_threshold", 7.0);
+    high_speed_threshold_ = declareAndGetDoubleParam("high_speed_threshold", 13.0);
+    standing_launch_accel_ = declareAndGetDoubleParam("standing_launch_accel", 2.8);
+    low_speed_max_accel_ = declareAndGetDoubleParam("low_speed_max_accel", 0.85);
+    corner_exit_steer_derate_ = declareAndGetDoubleParam("corner_exit_steer_derate", 0.75);
+    max_accel_slew_rate_ = declareAndGetDoubleParam("max_accel_slew_rate", 6.0);
+    max_decel_slew_rate_ = declareAndGetDoubleParam("max_decel_slew_rate", 25.0);
+    a_brake_ = declareAndGetDoubleParam("a_brake", 5.8);
+    understeer_gradient_ = declareAndGetDoubleParam("understeer_gradient", 0.0012);
 
-    low_speed_threshold_ = this->get_parameter("low_speed_threshold").as_double();
-    high_speed_threshold_ = this->get_parameter("high_speed_threshold").as_double();
-    standing_launch_accel_ = this->get_parameter("standing_launch_accel").as_double();
-    low_speed_max_accel_ = this->get_parameter("low_speed_max_accel").as_double();
-    corner_exit_steer_derate_ = this->get_parameter("corner_exit_steer_derate").as_double();
-    max_accel_slew_rate_ = this->get_parameter("max_accel_slew_rate").as_double();
-    max_decel_slew_rate_ = this->get_parameter("max_decel_slew_rate").as_double();
-    a_brake_ = this->get_parameter("a_brake").as_double();
-    understeer_gradient_ = this->get_parameter("understeer_gradient").as_double();
+    centerline_topic_ = this->get_parameter("centerline_topic").as_string();
+    speed_limits_csv_ = this->get_parameter("speed_limits_csv").as_string();
 
     // Configure SpeedGovernor (from Velocità limite.xlsx)
     speed_governor_.configure(speed_scale_, max_straight_speed_);
@@ -304,19 +280,7 @@ void MPCPacsimNode::landmarksCallback(const pacsim::msg::Track::SharedPtr msg) {
             RCLCPP_INFO(this->get_logger(), "✓ Global landmarks track received (Length: %.2f m). Control loop STARTED.", 
                 track_.getTrackLength());
         }
-        // Publish smooth reference trajectory visualization (sampled every 0.25m from spline)
-        std::vector<double> smooth_rx, smooth_ry;
-        double tlen = track_.getTrackLength();
-        size_t n_samples = static_cast<size_t>(tlen / 0.25) + 1;
-        smooth_rx.reserve(n_samples);
-        smooth_ry.reserve(n_samples);
-        for (size_t i = 0; i < n_samples; ++i) {
-            double s_samp = std::min(i * 0.25, tlen);
-            auto [rx, ry, rpsi, rkappa] = track_.getReferencePoint(s_samp);
-            smooth_rx.push_back(rx);
-            smooth_ry.push_back(ry);
-        }
-        ref_path_pub_->publish(utils::createReferencePathMarker(smooth_rx, smooth_ry, this->now()));
+        publishReferencePath();
     }
 }
 
@@ -439,8 +403,9 @@ void MPCPacsimNode::controlLoop() {
             solver_.setStageControlBounds(k, min_accel_, a_eff_max, -1.5, 1.5);
         }
 
-        if (k > 0) {
-            solver_.setStageLateralBounds(k, -bound_r, bound_l);
+        if (k > 0 && k < MPC_N) {
+            double v_bound_max = std::max(35.0, max_straight_speed_ * 1.3);
+            solver_.setStageLateralBounds(k, -bound_r, bound_l, v_bound_max);
         }
     }
     auto t_horizon_end = std::chrono::high_resolution_clock::now();
@@ -652,6 +617,21 @@ void MPCPacsimNode::publishVisualizations(const std::vector<StateVector>& predic
         y_ref_horizon.push_back(ry);
     }
     ref_spheres_pub_->publish(utils::createReferenceSpheresMarker(x_ref_horizon, y_ref_horizon, stamp));
+}
+
+double MPCPacsimNode::declareAndGetDoubleParam(const std::string& name, double default_val) {
+    rcl_interfaces::msg::ParameterDescriptor desc;
+    desc.dynamic_typing = true;
+    if (!this->has_parameter(name)) {
+        this->declare_parameter(name, rclcpp::ParameterValue(default_val), desc);
+    }
+    auto param = this->get_parameter(name);
+    if (param.get_type() == rclcpp::PARAMETER_DOUBLE) {
+        return param.as_double();
+    } else if (param.get_type() == rclcpp::PARAMETER_INTEGER) {
+        return static_cast<double>(param.as_int());
+    }
+    return default_val;
 }
 
 } // namespace mpc

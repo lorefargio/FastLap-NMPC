@@ -58,9 +58,9 @@ public:
     void setStageParameters(int stage, double kappa, double w_l, double w_r, double mu);
 
     /**
-     * @brief Updates lateral error constraints (lbx, ubx on e_y) for stage k.
+     * @brief Updates state bounds (lbx, ubx on e_y, v, delta) for stage k.
      */
-    void setStageLateralBounds(int stage, double e_y_min, double e_y_max);
+    void setStageLateralBounds(int stage, double e_y_min, double e_y_max, double v_max = 35.0);
 
     /**
      * @brief Updates control bounds (lbu, ubu on a and v_delta) for stage k.

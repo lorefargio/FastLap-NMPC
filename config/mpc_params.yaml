@@ -22,8 +22,8 @@ mpc_controller:
     stop_on_trajectory_complete: false
 
     # Speed Governor & Curvature Limits (from Velocità limite.xlsx)
-    speed_scale: 0.95            # Multiplier on empirical limit velocity curve 
-    max_straight_speed: 22.5     # Top speed on straightaways [m/s] 
+    speed_scale: 0.95            # Multiplier on empirical limit velocity curve (0.90 for safe precision)
+    max_straight_speed: 27.0     # Top speed on straightaways [m/s] (configurable without solver stalls)
     speed_limits_csv: ""         # Optional CSV path (empty = use embedded table from Velocità limite.xlsx)
 
     # Launch Control & Traction Gating (standing start launch + hairpin exit stability)

@@ -18,7 +18,7 @@ def getFullFilePath(name, dir, package='pacsim'):
 
 def generate_launch_description():
     # PACSim configuration
-    track_name = "FSG23_centerline.yaml"
+    track_name = "FSE23_centerline.yaml"
     track_frame = "map"
     realtime_ratio = 1.0
     xacro_file_name = 'separate_model.xacro'
@@ -27,7 +27,7 @@ def generate_launch_description():
     # Launch arguments
     discipline_arg = DeclareLaunchArgument(
         "discipline",
-        default_value="autocross",
+        default_value="trackdrive",
         description="FS discipline: 'autocross' (3 laps) or 'trackdrive' (10 laps)"
     )
     centerline_topic_arg = DeclareLaunchArgument(

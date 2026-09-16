@@ -139,9 +139,17 @@ bool SpeedGovernor::loadFromCsv(const std::string& csv_path) {
 double SpeedGovernor::computeSafeSpeed(double kappa) const {
     double k = std::abs(kappa);
 
-    // 1. Straightaways (k near 0): Cap at maximum straightaway speed
-    if (k <= speed_table_.front().first) {
-        return std::min(max_straight_speed_, speed_table_.front().second) * speed_scale_;
+    // 1. Straightaways and wide curves (k near 0):
+    // Smoothly transition from max_straight_speed at k=0 down to table max at k_min (R=29.6m)
+    double k_min = speed_table_.front().first;
+    double v_table_max = speed_table_.front().second;
+    if (k <= k_min) {
+        if (max_straight_speed_ <= v_table_max) {
+            return max_straight_speed_ * speed_scale_;
+        }
+        double frac = (k_min > 1e-6) ? (k / k_min) : 0.0;
+        double v_interp = max_straight_speed_ - frac * (max_straight_speed_ - v_table_max);
+        return v_interp * speed_scale_;
     }
 
     // 2. Sharp hairpins (k > table max, R < 9.13m):

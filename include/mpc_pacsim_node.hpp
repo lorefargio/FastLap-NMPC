@@ -43,6 +43,7 @@ private:
     void publishZeroControls();
     void publishVisualizations(const std::vector<StateVector>& predicted_states, double current_s);
     void publishReferencePath();
+    double declareAndGetDoubleParam(const std::string& name, double default_val);
 
     // ROS Publishers
     rclcpp::Publisher<pacsim::msg::StampedScalar>::SharedPtr steering_pub_;
