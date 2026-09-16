@@ -54,21 +54,42 @@ public:
 
     /**
      * @brief Compute dynamic maximum allowable longitudinal acceleration.
-     * Prevents violent throttle snap on straights at low speed and preserves lateral grip on corner exit.
+     * Allows energetic standing starts on straights while preventing torque snaps and yaw instability on corner exits.
      * @param current_speed Current vehicle speed [m/s].
      * @param steering_angle Current wheel steering angle [rad].
-     * @param low_speed_thresh Speed threshold below which low-speed limit applies [m/s] (e.g. 6.0 m/s).
-     * @param high_speed_thresh Speed threshold above which full acceleration is unlocked [m/s] (e.g. 12.0 m/s).
-     * @param low_speed_max_accel Maximum acceleration at low speed [m/s^2] (e.g. 1.6 m/s^2).
+     * @param low_speed_thresh Speed threshold below which low-speed limit applies [m/s] (e.g. 7.0 m/s).
+     * @param high_speed_thresh Speed threshold above which full acceleration is unlocked [m/s] (e.g. 13.0 m/s).
+     * @param low_speed_max_accel Maximum acceleration at low speed when steering is turned [m/s^2] (e.g. 0.85 m/s^2).
      * @param full_max_accel Full acceleration on high-speed straights [m/s^2] (e.g. 3.5 m/s^2).
-     * @param steer_derate Derating factor based on steering angle (0.0 to 1.0, e.g. 0.60).
+     * @param standing_launch_accel Maximum acceleration on straight lines at low speed / launch [m/s^2] (e.g. 2.8 m/s^2).
+     * @param steer_derate Derating factor based on steering angle (0.0 to 1.0, e.g. 0.75).
      * @param max_steer Maximum wheel steering angle [rad] (e.g. 0.52 rad).
      */
     double computeEffectiveMaxAccel(
         double current_speed, double steering_angle,
-        double low_speed_thresh = 6.0, double high_speed_thresh = 12.0,
-        double low_speed_max_accel = 1.6, double full_max_accel = 3.5,
-        double steer_derate = 0.60, double max_steer = 0.52) const;
+        double low_speed_thresh = 7.0, double high_speed_thresh = 13.0,
+        double low_speed_max_accel = 0.85, double full_max_accel = 3.5,
+        double standing_launch_accel = 2.8,
+        double steer_derate = 0.75, double max_steer = 0.52) const;
+
+    /**
+     * @brief Compute a dynamically-feasible speed profile along preview coordinates using a backward braking pass.
+     * Propagates deceleration backwards from upcoming corners so vehicle brakes on straights before entering turns.
+     * @param s_stages Vector of arc-lengths s along the horizon and lookahead window.
+     * @param kappas Vector of curvatures kappa corresponding to s_stages.
+     * @param current_speed Current vehicle speed [m/s].
+     * @param num_output_stages Number of stages to return (e.g. MPC_N + 1).
+     * @param a_brake Maximum comfortable braking deceleration [m/s^2] (e.g. 3.5 m/s^2).
+     * @param a_accel Maximum comfortable acceleration [m/s^2] (e.g. 2.5 m/s^2).
+     * @return Vector of target speeds [m/s] for stages 0 .. num_output_stages - 1.
+     */
+    std::vector<double> computeFeasibleSpeedProfile(
+        const std::vector<double>& s_stages,
+        const std::vector<double>& kappas,
+        double current_speed,
+        size_t num_output_stages,
+        double a_brake = 3.5,
+        double a_accel = 2.5) const;
 
     /**
      * @brief Get count of loaded empirical points.

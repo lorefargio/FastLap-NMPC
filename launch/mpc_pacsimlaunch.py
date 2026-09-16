@@ -10,6 +10,7 @@ from launch.events import Shutdown
 
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import AnyLaunchDescriptionSource
+from launch.conditions import IfCondition
 
 def getFullFilePath(name, dir, package='pacsim'):
     return os.path.join(get_package_share_directory(package), dir, name)
@@ -26,13 +27,13 @@ def generate_launch_description():
     # Launch arguments
     discipline_arg = DeclareLaunchArgument(
         "discipline",
-        default_value="trackdrive",
-        description="FS discipline: 'trackdrive' (10 laps) or 'autocross' (3 laps)"
+        default_value="autocross",
+        description="FS discipline: 'autocross' (3 laps) or 'trackdrive' (10 laps)"
     )
     centerline_topic_arg = DeclareLaunchArgument(
         "centerline_topic",
-        default_value="/pacsim/track/centerline_raw_front",
-        description="Reference centerline topic: /pacsim/track/centerline_raw_front (cone midpoints) or /pacsim/track/centerline_smoothed_front"
+        default_value="/pacsim/track/centerline_smoothed",
+        description="Reference centerline topic: /pacsim/track/centerline_smoothed (full closed circuit) or /pacsim/track/centerline_smoothed_front"
     )
     log_dir_arg = DeclareLaunchArgument(
         "log_dir",
@@ -58,11 +59,12 @@ def generate_launch_description():
     log_dir = LaunchConfiguration("log_dir")
     mpc_params = LaunchConfiguration("mpc_params")
 
-    # Foxglove Bridge Node / Launch
+    # Foxglove Bridge Node / Launch (only started if use_foxglove:=true)
     foxglove_bridge_launch = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
             os.path.join(get_package_share_directory('foxglove_bridge'), 'launch', 'foxglove_bridge_launch.xml')
-        )
+        ),
+        condition=IfCondition(LaunchConfiguration("use_foxglove"))
     )
 
     # PACSim Simulator Node

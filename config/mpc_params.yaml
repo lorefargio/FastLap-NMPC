@@ -10,7 +10,7 @@ mpc_controller:
     log_dir: "/workspace/MPC_logs"
 
     # Track Geometry & Constraints
-    centerline_topic: "/pacsim/track/centerline_raw_front"  # Raw cone midpoints (true centerline)
+    centerline_topic: "/pacsim/track/centerline_smoothed"  # Full closed circuit (or /pacsim/track/centerline_smoothed_front)
     default_track_width: 3.0     # Nominal track width [m]
     track_margin: 0.90           # Safety buffer from cones [m] (half-car 0.70m + 0.20m)
     effective_mu: 1.0            # Effective tire friction coefficient
@@ -18,17 +18,21 @@ mpc_controller:
     # Acceleration & Speed Bounds
     max_accel: 3.5               # Max longitudinal acceleration [m/s^2]
     min_accel: -8.0              # Max braking deceleration [m/s^2]
+    a_brake: 5.8                 # Braking deceleration for backward-pass speed profile [m/s^2]
     stop_on_trajectory_complete: false
 
     # Speed Governor & Curvature Limits (from Velocità limite.xlsx)
-    speed_scale: 0.90            # Multiplier on empirical limit velocity curve (0.90 = 10% safety margin)
-    max_straight_speed: 22.5     # Top speed on straightaways [m/s] (81 km/h)
+    speed_scale: 0.95            # Multiplier on empirical limit velocity curve 
+    max_straight_speed: 22.5     # Top speed on straightaways [m/s] 
     speed_limits_csv: ""         # Optional CSV path (empty = use embedded table from Velocità limite.xlsx)
 
-    # Low-Speed & Corner Exit Launch Governor (eliminates corner-exit snaking / zig-zag)
-    low_speed_threshold: 6.0     # Speed [m/s] below which low-speed limit is active
-    high_speed_threshold: 12.0   # Speed [m/s] above which full acceleration is reached
-    low_speed_max_accel: 1.6     # Gentle max acceleration at low speed [m/s^2] (avoids violent throttle snap)
-    corner_exit_steer_derate: 0.60 # Derating factor based on steering angle at corner exit
-    max_accel_slew_rate: 8.0     # Maximum acceleration slew rate [m/s^3] (torque ramp smoothing)
+    # Launch Control & Traction Gating (standing start launch + hairpin exit stability)
+    low_speed_threshold: 7.0     # Speed [m/s] below which low-speed limit is active
+    high_speed_threshold: 13.0   # Speed [m/s] above which full acceleration is reached
+    standing_launch_accel: 2.8   # High acceleration for standing start on straight lines [m/s^2]
+    low_speed_max_accel: 0.85    # Gentle max acceleration at low speed when steering is turned [m/s^2]
+    corner_exit_steer_derate: 0.75 # Derating factor based on steering angle at corner exit
+    max_accel_slew_rate: 6.0     # Max throttle rise slew rate [m/s^3] (smooth torque ramp)
+    max_decel_slew_rate: 25.0    # Max braking onset slew rate [m/s^3] (rapid deceleration response)
+    understeer_gradient: 0.0012
 

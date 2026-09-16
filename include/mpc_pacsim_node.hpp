@@ -42,6 +42,7 @@ private:
     std::tuple<double, double, double, double> publishControls(double steering_wheel_rad, double acceleration, double solve_time_us);
     void publishZeroControls();
     void publishVisualizations(const std::vector<StateVector>& predicted_states, double current_s);
+    void publishReferencePath();
 
     // ROS Publishers
     rclcpp::Publisher<pacsim::msg::StampedScalar>::SharedPtr steering_pub_;
@@ -93,14 +94,18 @@ private:
     double speed_scale_ = 0.90;
     double max_straight_speed_ = 22.5;
     std::string speed_limits_csv_ = "";
-    std::string centerline_topic_ = "/pacsim/track/centerline_raw_front";
+    std::string centerline_topic_ = "/pacsim/track/centerline_smoothed";
 
     // Launch & Corner Exit Acceleration Governor
-    double low_speed_threshold_ = 6.0;
-    double high_speed_threshold_ = 12.0;
-    double low_speed_max_accel_ = 1.6;
-    double corner_exit_steer_derate_ = 0.60;
-    double max_accel_slew_rate_ = 8.0;
+    double low_speed_threshold_ = 7.0;
+    double high_speed_threshold_ = 13.0;
+    double standing_launch_accel_ = 2.8;
+    double low_speed_max_accel_ = 0.85;
+    double corner_exit_steer_derate_ = 0.75;
+    double max_accel_slew_rate_ = 6.0;
+    double max_decel_slew_rate_ = 25.0;
+    double a_brake_ = 5.8;
+    double understeer_gradient_ = 0.0012; // rad / (m/s^2) for tire slip angle compensation
 
     // Counters & Status Flags
     size_t control_loop_count_ = 0;
