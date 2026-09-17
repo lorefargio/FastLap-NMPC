@@ -86,6 +86,26 @@ public:
     double getLeftWidth() const { return nominal_half_width_; }
     double getRightWidth() const { return nominal_half_width_; }
 
+    /**
+     * @brief Gets the local corridor half-width at arc-length s [m].
+     */
+    double getLeftWidth(double s) const;
+    double getRightWidth(double s) const;
+
+    /**
+     * @brief Gets the local left and right corridor half-widths at arc-length s [m].
+     * @return std::pair<double w_left, double w_right>
+     */
+    std::pair<double, double> getCorridorBounds(double s) const {
+        return { getLeftWidth(s), getRightWidth(s) };
+    }
+
+    /**
+     * @brief Incorporates track boundary cones to fit continuous local corridor half-widths.
+     */
+    void setBoundaryCones(const std::vector<Eigen::Vector2d>& left_cones,
+                          const std::vector<Eigen::Vector2d>& right_cones);
+
     static double normalizeAngle(double angle) {
         while (angle > M_PI) angle -= 2.0 * M_PI;
         while (angle < -M_PI) angle += 2.0 * M_PI;
@@ -101,11 +121,14 @@ private:
 
     CubicSpline1D spline_x_;
     CubicSpline1D spline_y_;
+    CubicSpline1D spline_wl_;
+    CubicSpline1D spline_wr_;
 
     double track_length_ = 0.0;
     double nominal_half_width_ = 1.5;
     bool is_closed_ = false;
     bool is_initialized_ = false;
+    bool has_local_widths_ = false;
 
     mutable size_t last_closest_idx_ = 0;
 

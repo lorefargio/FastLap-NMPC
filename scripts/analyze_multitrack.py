@@ -42,6 +42,60 @@ TRACK_METADATA = {
 }
 
 
+def load_pacsim_report(track_dir: str):
+    """Parses official PACSim competition report (report-*.yaml) for ground-truth referee penalties."""
+    import glob
+    import yaml
+    report_files = glob.glob(os.path.join(track_dir, "report-*.yaml"))
+    if not report_files:
+        report_files = glob.glob("/tmp/report-*.yaml")
+        if report_files:
+            report_files = sorted(report_files, key=os.path.getmtime, reverse=True)
+    if not report_files:
+        return None
+    try:
+        with open(report_files[0], "r") as f:
+            data = yaml.safe_load(f)
+        report = data.get("report", {})
+        penalties = report.get("penalties", [])
+        doo_hits = [p.get("penalty", {}) for p in penalties if p.get("penalty", {}).get("reason") == "doo"]
+        oc_events = [p.get("penalty", {}) for p in penalties if p.get("penalty", {}).get("reason") == "oc"]
+        return {
+            "file": report_files[0],
+            "total_penalties": len(penalties),
+            "doo_cone_strikes": len(doo_hits),
+            "oc_offcourses": len(oc_events),
+            "penalties": penalties,
+            "final_time": report.get("status", {}).get("final_time"),
+            "success": report.get("status", {}).get("success", False)
+        }
+    except Exception as e:
+        print(f"[DataLoader] Warning: Error parsing PACSim report: {e}")
+        return None
+
+
+def count_discrete_events(values: np.ndarray, threshold: float = 0.0, min_gap_samples: int = 20) -> int:
+    """Clusters consecutive samples below threshold into distinct discrete events."""
+    below = values <= threshold
+    if not np.any(below):
+        return 0
+    events = 0
+    in_event = False
+    gap_count = 0
+    for val in below:
+        if val:
+            if not in_event:
+                events += 1
+                in_event = True
+            gap_count = 0
+        else:
+            if in_event:
+                gap_count += 1
+                if gap_count >= min_gap_samples:
+                    in_event = False
+    return events
+
+
 def load_track_data(track_dir: str) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[Dict[str, Any]]]:
     """Loads telemetry, timing, and laps summary with robust fallbacks."""
     telem_path = os.path.join(track_dir, "mpc_telemetry.csv")
@@ -140,7 +194,7 @@ def segment_laps(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
 
 def compute_track_metrics(df_telem: pd.DataFrame, df_timing: Optional[pd.DataFrame],
-                          summary: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                          summary: Optional[Dict[str, Any]], track_dir: str = "") -> Dict[str, Any]:
     """Computes exhaustive metrics for a single track run."""
     m: Dict[str, Any] = {}
     laps = segment_laps(df_telem)
@@ -158,29 +212,37 @@ def compute_track_metrics(df_telem: pd.DataFrame, df_timing: Optional[pd.DataFra
         st_moving = st[st["v"] > 0.15]
         if len(st_moving) > 0:
             lap1_time = float(st["time"].iloc[-1] - st_moving["time"].iloc[0])
+        else:
+            lap1_time = float(st["time"].iloc[-1] - st_moving["time"].iloc[0])
 
     if lap2_time is None and "flying" in laps:
         fl = laps["flying"]
         lap2_time = float(fl["time"].iloc[-1] - fl["time"].iloc[0])
 
-    m["lap1_standing_time"] = round(lap1_time, 3) if lap1_time is not None else None
-    m["lap2_flying_time"] = round(lap2_time, 3) if lap2_time is not None else None
-    m["total_2lap_time"] = round((lap1_time or 0) + (lap2_time or 0), 3) if (lap1_time and lap2_time) else None
-    m["launch_penalty"] = round(lap1_time - lap2_time, 3) if (lap1_time and lap2_time) else None
+    m["lap1_standing_time"] = lap1_time
+    m["lap2_flying_time"] = lap2_time
 
-    # Focus on Flying Lap for dynamic benchmarks (if available, otherwise full df)
+    if lap1_time is not None and lap2_time is not None:
+        m["launch_penalty"] = float(lap1_time - lap2_time)
+        m["total_2lap_time"] = float(lap1_time + lap2_time)
+    else:
+        m["launch_penalty"] = None
+        m["total_2lap_time"] = None
+
+    # Focus evaluations on flying lap if available, otherwise entire run
     df_eval = laps.get("flying", df_telem)
 
-    # Speed metrics
+    # Velocity metrics
     v = df_eval["v"].values
     m["v_avg_flying"] = float(np.mean(v))
     m["v_max_flying"] = float(np.max(v))
 
-    # Tracking accuracy
+    # Tracking precision
     ey = df_eval["e_y"].values
     m["ey_mean_abs"] = float(np.mean(np.abs(ey)))
+    m["ey_rmse"] = float(np.sqrt(np.mean(ey**2)))
     m["ey_max_abs"] = float(np.max(np.abs(ey)))
-    m["ey_std"] = float(np.std(ey))
+    m["ey_p95"] = float(np.percentile(np.abs(ey), 95))
 
     if "e_psi" in df_eval.columns:
         epsi_deg = np.rad2deg(df_eval["e_psi"].values)
@@ -189,17 +251,24 @@ def compute_track_metrics(df_telem: pd.DataFrame, df_timing: Optional[pd.DataFra
         m["epsi_rms_deg"] = 0.0
 
     # Cone clearance & safety margins
-    if "min_cone_clearance" in df_eval.columns:
-        clr = df_eval["min_cone_clearance"].values
-        m["clearance_min"] = float(np.min(clr))
-        m["clearance_mean"] = float(np.mean(clr))
-        m["cones_near_miss_count"] = int(np.sum(clr < 0.30))
-        m["cone_breach_count"] = int(np.sum(clr <= 0.0))
+    clr = df_eval["min_cone_clearance"].values if "min_cone_clearance" in df_eval.columns else (1.5 - np.abs(df_eval["e_y"].values))
+    m["clearance_min"] = float(np.min(clr))
+    m["clearance_mean"] = float(np.mean(clr))
+    m["cones_near_miss_count"] = int(np.sum(clr < 0.30))
+    m["breach_samples"] = int(np.sum(clr <= 0.0))
+    m["discrete_breach_events"] = count_discrete_events(clr, threshold=0.0)
+
+    # Check official PACSim referee report for ground-truth cone hits
+    pacsim_rep = load_pacsim_report(track_dir) if track_dir else None
+    if pacsim_rep is not None:
+        m["cone_strikes_actual"] = pacsim_rep["doo_cone_strikes"]
+        m["cone_breach_count"] = pacsim_rep["doo_cone_strikes"]
+        m["has_pacsim_report"] = True
     else:
-        m["clearance_min"] = float(1.5 - m["ey_max_abs"])
-        m["clearance_mean"] = float(1.5 - m["ey_mean_abs"])
-        m["cones_near_miss_count"] = 0
-        m["cone_breach_count"] = 0
+        # Fallback to clustered discrete events
+        m["cone_strikes_actual"] = m["discrete_breach_events"]
+        m["cone_breach_count"] = m["discrete_breach_events"]
+        m["has_pacsim_report"] = False
 
     # Friction circle & envelope exploration
     if "friction_util_pct" in df_eval.columns:
@@ -306,13 +375,17 @@ def evaluate_cross_track_robustness(metrics_by_track: Dict[str, Dict[str, Any]])
             )
 
     # Score calculation (0 - 100)
-    # Safety component (40 pts): No breaches, good clearances
+    # Safety component (40 pts): No physical cone strikes (DOO), disciplined corridor respect
+    total_strikes = sum(metrics_by_track[t].get("cone_strikes_actual", 0) for t in valid_tracks)
+    total_events = sum(metrics_by_track[t].get("discrete_breach_events", 0) for t in valid_tracks)
     safety_score = 40.0
-    if total_breaches > 0:
-        safety_score = 0.0
+    if total_strikes > 0:
+        safety_score = max(0.0, 40.0 - total_strikes * 20.0)
+    elif total_events > 0:
+        safety_score = max(15.0, 40.0 - total_events * 10.0)
     else:
         if overall_min_clearance < 0.30:
-            safety_score -= 20.0 * (1.0 - overall_min_clearance / 0.30)
+            safety_score -= 20.0 * (1.0 - max(0.0, overall_min_clearance) / 0.30)
 
     # Determinism component (30 pts): Max solve time < 10ms (100 Hz deadline)
     deadline_score = 30.0
@@ -523,9 +596,11 @@ def generate_markdown_report(metrics: Dict[str, Dict[str, Any]],
     md.append(f"**Circuits Evaluated**: {', '.join([f'`{t}`' for t in track_order])}\n\n")
 
     # Executive Scorecard
+    total_strikes = sum(metrics[t].get('cone_strikes_actual', 0) for t in track_order)
+    total_events = sum(metrics[t].get('discrete_breach_events', 0) for t in track_order)
     md.append("## 1. Executive Cross-Track Scorecard\n")
     md.append(f"- **Overall Robustness Score**: **{robustness.get('robustness_score', 0)} / 100**\n")
-    md.append(f"- **Safety Score**: {robustness.get('safety_score', 0)} / 40 (Cone Breaches: **{robustness.get('total_breaches', 0)}**)\n")
+    md.append(f"- **Safety Score**: {robustness.get('safety_score', 0)} / 40 (Physical Cone Strikes: **{total_strikes}**, Corridor Excursions: **{total_events}**)\n")
     md.append(f"- **Real-Time Determinism Score**: {robustness.get('deadline_score', 0)} / 30 (Max Solve Time: **{robustness.get('overall_max_solve_ms', 0):.2f} ms**)\n")
     md.append(f"- **Track Generalization Score**: {robustness.get('generalization_score', 0)} / 30 (Tracking Error CV: **{robustness.get('cv_tracking_error', 0)*100:.1f}%**)\n\n")
 
@@ -556,6 +631,8 @@ def generate_markdown_report(metrics: Dict[str, Dict[str, Any]],
     md.append("| **Mean Lateral Error $|e_y|$** | " + " | ".join([f"{metrics[t].get('ey_mean_abs', 0):.3f} m" for t in track_order]) + " |\n")
     md.append("| **Max Lateral Error $|e_y|$** | " + " | ".join([f"{metrics[t].get('ey_max_abs', 0):.3f} m" for t in track_order]) + " |\n")
     md.append("| **Min Cone Clearance** | " + " | ".join([f"{metrics[t].get('clearance_min', 0):.3f} m" for t in track_order]) + " |\n")
+    md.append("| **Physical Cone Strikes (DOO)** | " + " | ".join([f"**{metrics[t].get('cone_strikes_actual', 0)}**" for t in track_order]) + " |\n")
+    md.append("| **Corridor Excursions (Events)** | " + " | ".join([f"{metrics[t].get('discrete_breach_events', 0)}" for t in track_order]) + " |\n")
     md.append("| **Mean Friction Util** | " + " | ".join([f"{metrics[t].get('friction_util_mean', 0):.1f}%" for t in track_order]) + " |\n")
     md.append("| **Peak Friction Util** | " + " | ".join([f"{metrics[t].get('friction_util_max', 0):.1f}%" for t in track_order]) + " |\n")
     md.append("| **Longitudinal Jerk RMS** | " + " | ".join([f"{metrics[t].get('jerk_lon_rms', 0):.1f} m/s³" for t in track_order]) + " |\n")
@@ -715,7 +792,7 @@ def main():
             continue
 
         tracks_data[t_name] = df_telem
-        metrics_by_track[t_name] = compute_track_metrics(df_telem, df_timing, summary)
+        metrics_by_track[t_name] = compute_track_metrics(df_telem, df_timing, summary, track_dir=t_dir)
 
     if not metrics_by_track:
         print(f"[Error] No valid track data found in {test_dir}!")

@@ -85,7 +85,69 @@ def detect_laps(df: pd.DataFrame):
     return laps if laps else [df]
 
 
-def compute_metrics(df: pd.DataFrame, df_timing: pd.DataFrame, laps: list):
+def load_pacsim_report(log_dir: str):
+    """
+    Parses official PACSim competition report (report-*.yaml) for ground-truth referee penalties.
+    Returns official penalties, lap times, and physical DOO (Down Or Out) cone strike count.
+    """
+    import glob
+    import yaml
+    report_files = glob.glob(os.path.join(log_dir, "report-*.yaml"))
+    if not report_files:
+        # Check /tmp as fallback if launch file was not updated
+        report_files = glob.glob("/tmp/report-*.yaml")
+        if report_files:
+            report_files = sorted(report_files, key=os.path.getmtime, reverse=True)
+    if not report_files:
+        return None
+
+    try:
+        with open(report_files[0], "r") as f:
+            data = yaml.safe_load(f)
+        report = data.get("report", {})
+        penalties = report.get("penalties", [])
+        doo_penalties = [p.get("penalty", {}) for p in penalties if p.get("penalty", {}).get("reason") == "doo"]
+        oc_penalties = [p.get("penalty", {}) for p in penalties if p.get("penalty", {}).get("reason") == "oc"]
+        return {
+            "file": report_files[0],
+            "total_penalties": len(penalties),
+            "doo_cone_strikes": len(doo_penalties),
+            "oc_offcourses": len(oc_penalties),
+            "penalties": penalties,
+            "final_time": report.get("status", {}).get("final_time"),
+            "success": report.get("status", {}).get("success", False)
+        }
+    except Exception as e:
+        print(f"[DataLoader] Warning: Error parsing PACSim report: {e}")
+        return None
+
+
+def count_discrete_events(values: np.ndarray, threshold: float = 0.0, min_gap_samples: int = 20) -> int:
+    """
+    Clusters consecutive samples below threshold into distinct discrete events.
+    Prevents a 0.5s excursion at 100 Hz from being reported as 50 separate strikes!
+    """
+    below = values <= threshold
+    if not np.any(below):
+        return 0
+    events = 0
+    in_event = False
+    gap_count = 0
+    for val in below:
+        if val:
+            if not in_event:
+                events += 1
+                in_event = True
+            gap_count = 0
+        else:
+            if in_event:
+                gap_count += 1
+                if gap_count >= min_gap_samples:
+                    in_event = False
+    return events
+
+
+def compute_metrics(df: pd.DataFrame, df_timing: pd.DataFrame, laps: list, log_dir: str = ""):
     """Computes exhaustive physical, tracking, and computational statistics."""
     # Lap times
     lap_times = []
@@ -112,9 +174,21 @@ def compute_metrics(df: pd.DataFrame, df_timing: pd.DataFrame, laps: list):
     epsi_max = np.max(np.abs(epsi))
 
     # Safety & Cone Clearance
-    min_clearance = np.min(df["min_cone_clearance"].values) if "min_cone_clearance" in df.columns else (1.5 - ey_max)
-    close_calls = np.sum(df["min_cone_clearance"].values < 0.30) if "min_cone_clearance" in df.columns else 0
-    cone_strikes = np.sum(df["min_cone_clearance"].values <= 0.0) if "min_cone_clearance" in df.columns else 0
+    clr_vals = df["min_cone_clearance"].values if "min_cone_clearance" in df.columns else (1.5 - np.abs(ey))
+    min_clearance = float(np.min(clr_vals))
+    close_calls = int(np.sum(clr_vals < 0.30))
+    breach_samples = int(np.sum(clr_vals <= 0.0))
+    discrete_breaches = count_discrete_events(clr_vals, threshold=0.0)
+
+    # Ground truth referee verification from PACSim report
+    pacsim_rep = load_pacsim_report(log_dir) if log_dir else None
+    if pacsim_rep is not None:
+        cone_strikes = pacsim_rep["doo_cone_strikes"]
+        ground_truth_referee = True
+    else:
+        # Fallback to clustered discrete events rather than 100 Hz timestep sum
+        cone_strikes = discrete_breaches
+        ground_truth_referee = False
 
     # Dynamics & Friction Circle
     a_lat = df["a_lat"].values if "a_lat" in df.columns else (df["v"] * df["yaw_rate"]).values
@@ -179,6 +253,10 @@ def compute_metrics(df: pd.DataFrame, df_timing: pd.DataFrame, laps: list):
         "min_clearance": min_clearance,
         "close_calls": close_calls,
         "cone_strikes": cone_strikes,
+        "breach_samples": breach_samples,
+        "discrete_breaches": discrete_breaches,
+        "pacsim_report": pacsim_rep,
+        "ground_truth_referee": ground_truth_referee,
         "a_lat_max": np.max(np.abs(a_lat)),
         "a_lon_min": np.min(a_lon),
         "a_lon_max": np.max(a_lon),
@@ -214,11 +292,11 @@ def generate_recommendations(m: dict, df: pd.DataFrame) -> list:
     if not ey_in_braking.empty and ey_in_braking.max() > 0.35:
         recommendations.append({
             "parameter": "a_brake",
-            "current": "5.8",
-            "suggested": "6.5",
+            "current": "4.6",
+            "suggested": "4.2",
             "priority": "HIGH",
             "finding": f"High lateral error during heavy deceleration zones (Max |ey| in braking = {ey_in_braking.max():.2f} m).",
-            "rationale": "Deceleration is initiating slightly late before corner entry, inducing lateral drift at turn-in. Increasing a_brake triggers anticipated braking earlier along the straight."
+            "rationale": "Deceleration is initiating slightly late before corner entry, inducing lateral drift at turn-in. Decreasing a_brake triggers anticipated braking earlier along the straight."
         })
 
     # 3. Steering Jerk & Actuator Smoothness
@@ -407,7 +485,11 @@ def export_markdown_report(m: dict, recs: list, output_path: str):
     md.append(f"| **P95 Lateral Error** | **{m['ey_p95']:.3f} m** | $< 0.40\\text{{ m}}$ | PASS |")
     md.append(f"| **Minimum Cone Clearance** | **{m['min_clearance']:.3f} m** | $> 0.25\\text{{ m}}$ | {'SAFE' if m['min_clearance'] > 0.30 else 'WARNING'} |")
     md.append(f"| **Close Calls (<0.30m)** | **{m['close_calls']} samples** | $0$ | {'PASS' if m['close_calls'] == 0 else 'MONITOR'} |")
-    md.append(f"| **Cone Strikes** | **{m['cone_strikes']}** | $0$ | {'PERFECT' if m['cone_strikes'] == 0 else 'FAIL'} |")
+    if m.get("ground_truth_referee"):
+        md.append(f"| **Physical Cone Strikes (PACSim DOO)** | **{m['cone_strikes']}** | $0$ | {'PERFECT' if m['cone_strikes'] == 0 else 'FAIL'} |")
+    else:
+        md.append(f"| **Physical Cone Strikes (Estimated)** | **{m['cone_strikes']}** | $0$ | {'PERFECT' if m['cone_strikes'] == 0 else 'FAIL'} |")
+    md.append(f"| **Corridor Excursion Events ($|e_y| > 1.5\\text{{m}}$)** | **{m.get('discrete_breaches', 0)}** ({m.get('breach_samples', 0)} samples) | $0$ | {'PASS' if m.get('discrete_breaches', 0) == 0 else 'MONITOR'} |")
     md.append("\n---\n")
 
     # Grip & Dynamics
@@ -487,7 +569,7 @@ def main():
         sys.exit(1)
 
     laps = detect_laps(df_telem)
-    metrics = compute_metrics(df_telem, df_timing, laps)
+    metrics = compute_metrics(df_telem, df_timing, laps, log_dir=log_dir)
     recs = generate_recommendations(metrics, df_telem)
 
     print_terminal_summary(metrics, recs)

@@ -12,26 +12,26 @@ mpc_controller:
     # Track Geometry & Boundaries
     centerline_topic: "/pacsim/track/centerline_smoothed"  # Smoothed reference spline trajectory topic
     default_track_width: 3.0     # Nominal track corridor width [m]
-    track_margin: 0.95           # Safety clearance from cones [m] (vehicle half-width 0.70m + 0.20m buffer)
+    track_margin: 0.80           # Safety clearance from cones [m] 
     effective_mu: 1.0            # Nominal tire-road friction coefficient [-]
 
     # Acceleration & Braking Bounds
-    max_accel: 3.5               # Maximum longitudinal drive acceleration [m/s^2]
+    max_accel: 4.8               # Maximum longitudinal drive acceleration [m/s^2]
     min_accel: -8.0              # Maximum longitudinal service braking deceleration [m/s^2]
-    a_brake: 6.8                 # Anticipated deceleration for backward-pass preview speed profile [m/s^2]
+    a_brake: 5.0                 # Anticipated deceleration for backward-pass preview speed profile [m/s^2]
     stop_on_trajectory_complete: false # Automatically stop vehicle when reference path ends
 
     # Speed Governor & Curvature Limits (Empirical Skidpad Data)
-    speed_scale: 0.95            # Multiplier on empirical limit velocity curve (0.90 for high precision & safety)
+    speed_scale: 1.00            # Full 100% empirical limit velocity curve
     max_straight_speed: 25.0     # Top speed on straightaways [m/s] (configurable without solver stalls)
     speed_limits_csv: ""         # Optional CSV path for custom limits (empty = use embedded lookup table)
 
     # Launch Control & Traction Gating (Standing Launch + Hairpin Exit Stability)
-    low_speed_threshold: 7.0     # Speed [m/s] below which low-speed traction gating is active
-    high_speed_threshold: 13.0   # Speed [m/s] above which full acceleration is unlocked
-    standing_launch_accel: 3.5   # High acceleration permitted for standing start on straight lines [m/s^2]
-    low_speed_max_accel: 0.85    # Gentle acceleration cap at low speed when steering is applied [m/s^2]
-    corner_exit_steer_derate: 0.75 # Proportional torque attenuation based on steering angle at corner exit [-]
-    max_accel_slew_rate: 8.5     # Maximum throttle rise slew rate [m/s^3] (prevents wheelspin & jerk)
+    low_speed_threshold: 6.0     # Speed [m/s] below which low-speed traction gating is active
+    high_speed_threshold: 12.0   # Speed [m/s] above which full acceleration is unlocked
+    standing_launch_accel: 4.8   # High acceleration permitted for standing start on straight lines [m/s^2]
+    low_speed_max_accel: 2.20    # Progressive acceleration baseline at low speed [m/s^2]
+    corner_exit_steer_derate: 0.55 # Proportional torque attenuation based on steering angle at corner exit [-]
+    max_accel_slew_rate: 9.0     # Maximum throttle rise slew rate [m/s^3] (rapid torque delivery on straights)
     max_decel_slew_rate: 25.0    # Maximum braking onset slew rate [m/s^3] (rapid emergency braking response)
-    understeer_gradient: 0.0018  # Dynamic tire slip angle feedforward compensation [rad / (m/s^2)]
+    understeer_gradient: 0.0008  # Dynamic tire slip angle feedforward compensation [rad / (m/s^2)] (active |a_lat| > 2.5 m/s^2)

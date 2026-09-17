@@ -143,13 +143,13 @@ def create_ocp() -> AcadosOcp:
         model.x[4]       # delta
     )
 
-    # Cost weights (Tuned for smooth tracking without twitching or weaving)
-    w_v       = 2.5      # Target speed tracking weight
-    q_ey      = 15.0     # Damped lateral tracking penalty
-    q_epsi    = 18.0     # Heading tangent alignment penalty
-    r_delta   = 0.30     # Steering angle regularization
-    r_a       = 0.40     # Longitudinal acceleration smoothness
-    r_vdelta  = 3.50     # High steering rate penalty (forces smooth fluid steering)
+    # Cost weights (Tuned for Autonomous Racing Corridor Optimization / MPCC)
+    w_v       = 4.0      # High speed/progress tracking weight
+    q_ey      = 0.08     # Free corridor exploration: allows cutting apexes and widening entry/exit
+    q_epsi    = 0.85     # Heading alignment penalty: optimal slip angle with exit stability
+    r_delta   = 0.35     # Steering angle centering penalty (smooth straightaway line holding)
+    r_a       = 0.30     # Longitudinal acceleration smoothness
+    r_vdelta  = 3.60     # High steering rate penalty (strong anti-chatter damping)
 
     W = np.diag([w_v, q_ey, q_epsi, r_delta, r_a, r_vdelta])
     W_e = np.diag([w_v * 1.5, q_ey * 1.5, q_epsi * 1.5, r_delta])
@@ -187,10 +187,11 @@ def create_ocp() -> AcadosOcp:
     ocp.constraints.idxsh = np.array([0])
 
     # Penalties for slack variables: [e_y_slack, friction_circle_slack]
-    ocp.cost.zl = np.array([200.0, 100.0]) # L1 linear penalty
-    ocp.cost.zu = np.array([200.0, 100.0])
-    ocp.cost.Zl = np.array([1000.0, 500.0]) # L2 quadratic penalty
-    ocp.cost.Zu = np.array([1000.0, 500.0])
+    # High quadratic penalties strictly enforce tire grip limit and cone boundaries!
+    ocp.cost.zl = np.array([400.0, 300.0]) # L1 linear penalty
+    ocp.cost.zu = np.array([400.0, 300.0])
+    ocp.cost.Zl = np.array([3000.0, 3000.0]) # L2 quadratic penalty
+    ocp.cost.Zu = np.array([3000.0, 3000.0])
 
     # Input box constraints: [a, v_delta]
     max_accel = float(params.get("max_accel", 3.5))

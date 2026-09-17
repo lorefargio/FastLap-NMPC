@@ -26,7 +26,7 @@ def generate_launch_description():
     # Launch arguments
     track_name_arg = DeclareLaunchArgument(
         "track_name",
-        default_value="FSE23_centerline.yaml",
+        default_value="/workspace/pacsim/tracks/FSE23_dense_centerline.yaml",
         description="Track file name in pacsim tracks dir (e.g. FSE23_centerline.yaml, FSG21_centerline.yaml, FSE24_centerline.yaml) or full path"
     )
     discipline_arg = DeclareLaunchArgument(
@@ -110,7 +110,7 @@ def generate_launch_description():
                 {"grip_map_path": getFullFilePath("gripMap.yaml", "tracks")}, 
                 {"track_frame": track_frame}, 
                 {"realtime_ratio": realtime_ratio}, 
-                {"report_file_dir": "/tmp"}, 
+                {"report_file_dir": resolved_log_dir}, 
                 {"main_config_path": getFullFilePath("mainConfig.yaml", dir="config")}, 
                 {"perception_config_path": getFullFilePath("perception.yaml", dir="config")}, 
                 {"sensors_config_path": getFullFilePath("sensors.yaml", dir="config")}, 

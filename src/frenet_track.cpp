@@ -169,6 +169,7 @@ bool FrenetTrack::build(const std::vector<double>& x_vals,
     }
 
     nominal_half_width_ = default_track_width / 2.0;
+    has_local_widths_ = false;
 
     // Check if loop closure endpoint is already duplicate
     if (is_closed && clean_x.size() >= 4) {
@@ -536,6 +537,116 @@ std::tuple<double, double, double> FrenetTrack::frenetToCartesian(
     double cart_psi = normalizeAngle(ref_psi + e_psi);
 
     return {cart_x, cart_y, cart_psi};
+}
+
+double FrenetTrack::getLeftWidth(double s) const {
+    if (!has_local_widths_ || !is_initialized_) {
+        return nominal_half_width_;
+    }
+    if (is_closed_ && track_length_ > 0.0) {
+        s = std::fmod(s, track_length_);
+        if (s < 0.0) s += track_length_;
+    } else {
+        s = std::clamp(s, 0.0, track_length_);
+    }
+    return std::clamp(spline_wl_(s), 0.8, 3.5);
+}
+
+double FrenetTrack::getRightWidth(double s) const {
+    if (!has_local_widths_ || !is_initialized_) {
+        return nominal_half_width_;
+    }
+    if (is_closed_ && track_length_ > 0.0) {
+        s = std::fmod(s, track_length_);
+        if (s < 0.0) s += track_length_;
+    } else {
+        s = std::clamp(s, 0.0, track_length_);
+    }
+    return std::clamp(spline_wr_(s), 0.8, 3.5);
+}
+
+void FrenetTrack::setBoundaryCones(const std::vector<Eigen::Vector2d>& left_cones,
+                                  const std::vector<Eigen::Vector2d>& right_cones)
+{
+    if (!is_initialized_ || track_length_ <= 1.0 || left_cones.size() < 3 || right_cones.size() < 3) {
+        return;
+    }
+
+    double ds_target = 0.5;
+    size_t num_intervals = static_cast<size_t>(std::ceil(track_length_ / ds_target));
+    if (num_intervals < 5) return;
+    size_t num_pts = num_intervals + 1;
+    double actual_ds = track_length_ / static_cast<double>(num_intervals);
+
+    Eigen::VectorXd s_samples(num_pts);
+    Eigen::VectorXd wl_samples(num_pts);
+    Eigen::VectorXd wr_samples(num_pts);
+
+    for (size_t i = 0; i < num_pts; ++i) {
+        double s_curr = (i == num_intervals) ? track_length_ : (i * actual_ds);
+        s_samples[i] = s_curr;
+        auto [rx, ry, rpsi, rkappa] = getReferencePoint(s_curr);
+        (void)rkappa;
+
+        // Normal pointing left (+ey)
+        double nx = -std::sin(rpsi);
+        double ny =  std::cos(rpsi);
+
+        // Find closest left cone
+        double min_dist_l = std::numeric_limits<double>::max();
+        for (const auto& cone : left_cones) {
+            double dx = cone.x() - rx;
+            double dy = cone.y() - ry;
+            double lat = dx * nx + dy * ny;
+            if (lat > -0.2) {
+                double d = std::hypot(dx, dy);
+                if (d < min_dist_l) {
+                    min_dist_l = d;
+                }
+            }
+        }
+        if (min_dist_l == std::numeric_limits<double>::max()) {
+            min_dist_l = nominal_half_width_;
+        }
+
+        // Find closest right cone
+        double min_dist_r = std::numeric_limits<double>::max();
+        for (const auto& cone : right_cones) {
+            double dx = cone.x() - rx;
+            double dy = cone.y() - ry;
+            double lat = dx * nx + dy * ny;
+            if (lat < 0.2) {
+                double d = std::hypot(dx, dy);
+                if (d < min_dist_r) {
+                    min_dist_r = d;
+                }
+            }
+        }
+        if (min_dist_r == std::numeric_limits<double>::max()) {
+            min_dist_r = nominal_half_width_;
+        }
+
+        wl_samples[i] = std::clamp(min_dist_l, 0.9, 3.5);
+        wr_samples[i] = std::clamp(min_dist_r, 0.9, 3.5);
+    }
+
+    if (is_closed_) {
+        double wl_avg = 0.5 * (wl_samples[0] + wl_samples[num_pts - 1]);
+        double wr_avg = 0.5 * (wr_samples[0] + wr_samples[num_pts - 1]);
+        wl_samples[0] = wl_avg;
+        wl_samples[num_pts - 1] = wl_avg;
+        wr_samples[0] = wr_avg;
+        wr_samples[num_pts - 1] = wr_avg;
+    }
+
+    try {
+        spline_wl_.build(s_samples, wl_samples);
+        spline_wr_.build(s_samples, wr_samples);
+        has_local_widths_ = true;
+    } catch (const std::exception& e) {
+        std::cerr << "[FrenetTrack] Warning: Failed to build boundary splines: " << e.what() << std::endl;
+        has_local_widths_ = false;
+    }
 }
 
 } // namespace mpc

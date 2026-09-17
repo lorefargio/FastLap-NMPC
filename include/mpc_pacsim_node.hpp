@@ -78,8 +78,11 @@ private:
     double current_yaw_rate_ = 0.0;
     double current_speed_ = 0.0;
     double last_steering_angle_ = 0.0;
+    double last_mpc_steering_ = 0.0;
     double last_acceleration_cmd_ = 0.0;
     double last_s_ = 0.0;
+    double max_steer_rate_ = 5.0; // Max road wheel steering rate [rad/s]
+    double last_handwheel_cmd_ = 0.0;
 
     // Node Parameters
     double control_dt_ = 0.01;
@@ -121,6 +124,15 @@ private:
     double prev_steering_wheel_cmd_ = 0.0;
     StateVector prev_predicted_x1_{0.0, 0.0, 0.0, 0.0, 0.0};
     bool has_prev_prediction_ = false;
+    std::vector<Eigen::Vector2d> cached_blue_cones_;
+    std::vector<Eigen::Vector2d> cached_yellow_cones_;
+
+    // Real-Time Lap Timing & Peak Statistics
+    double lap_start_time_ = 0.0;
+    double lap_max_speed_ = 0.0;
+    double lap_max_ey_ = 0.0;
+    double lap_min_clearance_ = 999.0;
+    bool lap_timer_started_ = false;
 
     // Timing & Performance Statistics
     double loop_time_sum_ms_ = 0.0;

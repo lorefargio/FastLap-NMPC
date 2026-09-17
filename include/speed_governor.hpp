@@ -89,7 +89,8 @@ public:
         double current_speed,
         size_t num_output_stages,
         double a_brake = 3.5,
-        double a_accel = 2.5) const;
+        double a_accel = 2.5,
+        const std::vector<double>& free_widths = {}) const;
 
     /**
      * @brief Get count of loaded empirical points.

@@ -214,6 +214,9 @@ void MPCPacsimNode::centerlineCallback(const visualization_msgs::msg::MarkerArra
     bool apply_smoothing = false;
 
     if (track_.build(xs, ys, is_closed, default_track_width_, apply_smoothing)) {
+        if (!cached_blue_cones_.empty() && !cached_yellow_cones_.empty()) {
+            track_.setBoundaryCones(cached_blue_cones_, cached_yellow_cones_);
+        }
         if (!track_received_) {
             track_received_ = true;
             control_timer_->reset();
@@ -254,6 +257,15 @@ void MPCPacsimNode::landmarksCallback(const pacsim::msg::Track::SharedPtr msg) {
         yellow_cones.emplace_back(lm.pose.pose.position.x, lm.pose.pose.position.y);
     }
 
+    cached_blue_cones_ = blue_cones;
+    cached_yellow_cones_ = yellow_cones;
+
+    // If track is already initialized from centerline, directly update local boundary splines
+    if (track_.isReady()) {
+        track_.setBoundaryCones(blue_cones, yellow_cones);
+        return;
+    }
+
     std::vector<double> xs, ys;
     size_t n = blue_cones.size();
     xs.reserve(n);
@@ -274,6 +286,7 @@ void MPCPacsimNode::landmarksCallback(const pacsim::msg::Track::SharedPtr msg) {
     }
 
     if (track_.build(xs, ys, true, default_track_width_, true)) {
+        track_.setBoundaryCones(blue_cones, yellow_cones);
         if (!track_received_) {
             track_received_ = true;
             control_timer_->reset();
@@ -345,13 +358,11 @@ void MPCPacsimNode::controlLoop() {
 
     // 3. Set Initial State Constraint x0 in acados: [s_rel=0.0, e_y, e_psi, v, delta]
     // Using relative s=0.0 ensures the solver is invariant to rolling track segment resets!
-    StateVector x0 = {0.0, e_y, e_psi, std::max(current_speed_, 0.5), last_steering_angle_};
+    StateVector x0 = {0.0, e_y, e_psi, std::max(current_speed_, 0.5), last_mpc_steering_};
     solver_.setInitialState(x0);
 
     // 4. Update track curvature, speed references, and boundaries along prediction horizon
     double preview_speed = std::max(current_speed_, 3.0);
-    double bound_l = track_.getLeftWidth() - track_margin_;
-    double bound_r = track_.getRightWidth() - track_margin_;
 
     // Dynamic launch governor: allows energetic standing launch on straights and derates with steering angle
     double a_eff_max = speed_governor_.computeEffectiveMaxAccel(
@@ -361,42 +372,68 @@ void MPCPacsimNode::controlLoop() {
         standing_launch_accel_,
         corner_exit_steer_derate_, 0.52);
 
+    // Kamm friction circle protection: when lateral acceleration is high, cap longitudinal drive force
+    // to prevent tire breakaway / snap oversteer on corner exits
+    double a_lat_est = std::abs((current_speed_ * current_speed_ / 1.53) * std::tan(last_steering_angle_));
+    double mu_g = effective_mu_ * 9.81;
+    if (a_lat_est > 5.0) {
+        double a_lat_safe = std::min(a_lat_est, mu_g * 0.92);
+        double a_lon_kamm = std::sqrt(std::max(0.4, (mu_g * 0.92) * (mu_g * 0.92) - a_lat_safe * a_lat_safe));
+        a_eff_max = std::min(a_eff_max, a_lon_kamm);
+    }
+
     // Build spatial preview coordinates (N+1 horizon stages + extended lookahead points)
     std::vector<double> s_preview;
     std::vector<double> kappa_preview;
+    std::vector<double> free_widths;
     s_preview.reserve(MPC_N + 1 + 25);
     kappa_preview.reserve(MPC_N + 1 + 25);
+    free_widths.reserve(MPC_N + 1 + 25);
 
     for (int k = 0; k <= MPC_N; ++k) {
         double s_stage = s + k * preview_speed * mpc_dt_;
         auto [rx, ry, rpsi, kappa_k] = track_.getReferencePoint(s_stage);
         s_preview.push_back(s_stage);
         kappa_preview.push_back(std::clamp(kappa_k, -2.5, 2.5));
+
+        double wl = track_.getLeftWidth(s_stage);
+        double wr = track_.getRightWidth(s_stage);
+        double w_free = std::max(0.0, std::min(wl, wr) - track_margin_);
+        free_widths.push_back(w_free);
     }
 
-    // Extended lookahead beyond stage N (up to 45 meters ahead of vehicle)
-    // Ensures upcoming sharp corners are anticipated early for smooth braking
+    // Extended lookahead beyond stage N (up to 65 meters ahead of vehicle)
+    // Ensures upcoming sharp corners are anticipated early for smooth straight-line braking from > 80 km/h
     double s_last = s_preview.back();
-    double s_max_lookahead = std::max(s + 45.0, s_last + 15.0);
+    double s_max_lookahead = std::max(s + 65.0, s_last + 25.0);
     double ds_lookahead = 1.5;
     for (double s_extra = s_last + ds_lookahead; s_extra <= s_max_lookahead; s_extra += ds_lookahead) {
         auto [rx, ry, rpsi, kappa_extra] = track_.getReferencePoint(s_extra);
         s_preview.push_back(s_extra);
         kappa_preview.push_back(std::clamp(kappa_extra, -2.5, 2.5));
+
+        double wl = track_.getLeftWidth(s_extra);
+        double wr = track_.getRightWidth(s_extra);
+        double w_free = std::max(0.0, std::min(wl, wr) - track_margin_);
+        free_widths.push_back(w_free);
     }
 
     // Compute dynamically-feasible speed profile with backward braking pass (a_brake_)
+    // Passes free_widths so the speed envelope reflects achievable racing line radius
     std::vector<double> speed_profile = speed_governor_.computeFeasibleSpeedProfile(
-        s_preview, kappa_preview, current_speed_, MPC_N + 1, a_brake_, a_eff_max);
+        s_preview, kappa_preview, current_speed_, MPC_N + 1, a_brake_, a_eff_max, free_widths);
 
     double v_target_current = speed_profile[0];
 
     for (int k = 0; k <= MPC_N; ++k) {
+        double s_k = s_preview[k];
         double kappa_k = kappa_preview[k];
         double v_ref_k = speed_profile[k];
         double mu_k = speed_governor_.computeEffectiveMu(kappa_k);
+        double wl_k = track_.getLeftWidth(s_k);
+        double wr_k = track_.getRightWidth(s_k);
 
-        solver_.setStageParameters(k, kappa_k, track_.getLeftWidth(), track_.getRightWidth(), mu_k);
+        solver_.setStageParameters(k, kappa_k, wl_k, wr_k, mu_k);
         solver_.setStageReference(k, v_ref_k, 0.0, 0.0, 0.0, 0.0, 0.0);
 
         if (k < MPC_N) {
@@ -404,8 +441,11 @@ void MPCPacsimNode::controlLoop() {
         }
 
         if (k > 0 && k < MPC_N) {
+            // Stage-dependent lateral corridor bounds derived from track cones
+            double bound_l_k = std::max(0.15, wl_k - track_margin_);
+            double bound_r_k = std::max(0.15, wr_k - track_margin_);
             double v_bound_max = std::max(35.0, max_straight_speed_ * 1.3);
-            solver_.setStageLateralBounds(k, -bound_r, bound_l, v_bound_max);
+            solver_.setStageLateralBounds(k, -bound_r_k, bound_l_k, v_bound_max);
         }
     }
     auto t_horizon_end = std::chrono::high_resolution_clock::now();
@@ -415,33 +455,40 @@ void MPCPacsimNode::controlLoop() {
 
     // 6. Extract Optimal Actuation with robust fallback
     double a_opt = 0.0;
-    double delta_target = last_steering_angle_;
+    double delta_mpc = last_mpc_steering_;
     double delta_dyn = 0.0;
 
     if (result.status == 0 || result.status == 2) {
         a_opt = result.optimal_u[0];
-        delta_target = result.target_steering_angle;
+        delta_mpc = result.target_steering_angle;
 
-        // Dynamic slip angle compensation for tire cornering compliance at speed
-        delta_dyn = understeer_gradient_ * (current_speed_ * current_speed_ * curvature);
-        delta_target += delta_dyn;
+        // Dynamic slip angle compensation for tire cornering compliance in high-g curves
+        // Inactive on straightaways (|a_lat| <= 2.5 m/s^2) and low speeds (v <= 7.0 m/s) to ensure straight-line stability
+        double a_lat_est = current_speed_ * current_speed_ * std::abs(curvature);
+        if (current_speed_ > 7.0 && a_lat_est > 2.5) {
+            double v_blend = std::clamp((current_speed_ - 7.0) / 3.0, 0.0, 1.0);
+            double alat_blend = std::clamp((a_lat_est - 2.5) / 2.0, 0.0, 1.0);
+            delta_dyn = v_blend * alat_blend * understeer_gradient_ * (current_speed_ * current_speed_ * curvature);
+        }
 
-        if (std::isnan(a_opt) || std::isinf(a_opt) || std::isnan(delta_target) || std::isinf(delta_target)) {
+        if (std::isnan(a_opt) || std::isinf(a_opt) || std::isnan(delta_mpc) || std::isinf(delta_mpc)) {
             RCLCPP_WARN(this->get_logger(), "Non-finite values from MPC solver! Using safe fallback.");
             a_opt = -1.5;
-            delta_target = last_steering_angle_;
+            delta_mpc = last_mpc_steering_;
         }
     } else {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
             "acados solver warning status: %d (solve time: %.1f us). Applying safe deceleration.", 
             result.status, result.solve_time_us);
         a_opt = -2.0; // Controlled safe braking
-        delta_target = last_steering_angle_ * 0.95;
+        delta_mpc = last_mpc_steering_ * 0.95;
     }
 
-    // Bound controls
+    last_mpc_steering_ = delta_mpc;
+
+    // Bound controls and apply dynamic feedforward to physical actuator command
     a_opt = std::clamp(a_opt, min_accel_, a_eff_max);
-    delta_target = std::clamp(delta_target, -0.52, 0.52);
+    double delta_target = std::clamp(delta_mpc + delta_dyn, -0.52, 0.52);
 
     // Convert wheel steering angle to steering wheel command
     double steering_wheel_cmd = delta_target / steering_ratio_;
@@ -455,12 +502,6 @@ void MPCPacsimNode::controlLoop() {
     auto t_pub_end = std::chrono::high_resolution_clock::now();
 
     double track_len = track_.getTrackLength();
-    if (track_len > 0.0) {
-        if (s < last_s_raw_ - 0.5 * track_len) {
-            current_lap_idx_++;
-        }
-        last_s_raw_ = s;
-    }
     double s_lap = (track_len > 0.0) ? std::fmod(s, track_len) : s;
     if (s_lap < 0.0 && track_len > 0.0) s_lap += track_len;
     double progress = (track_len > 0.0) ? (s_lap / track_len) : 0.0;
@@ -470,15 +511,62 @@ void MPCPacsimNode::controlLoop() {
     double a_lat = current_speed_ * current_yaw_rate_;
     double a_lon = last_acceleration_cmd_;
     double a_total = std::hypot(a_lon, a_lat);
-    double mu_g = effective_mu_ * 9.81;
     double friction_util_pct = (mu_g > 1e-3) ? (a_total / mu_g * 100.0) : 0.0;
     double friction_headroom = mu_g - a_total;
 
-    double w_l = track_.getLeftWidth();
-    double w_r = track_.getRightWidth();
+    double w_l = track_.getLeftWidth(s);
+    double w_r = track_.getRightWidth(s);
     double clearance_left = w_l - e_y;
     double clearance_right = w_r + e_y;
     double min_cone_clearance = std::min(clearance_left, clearance_right);
+
+    // Real-Time Lap Timing & Terminal Banner Logging
+    if (track_len > 0.0) {
+        if (!lap_timer_started_ && current_speed_ > 0.5) {
+            lap_timer_started_ = true;
+            lap_start_time_ = current_time;
+            current_lap_idx_ = 1;
+            lap_max_speed_ = current_speed_;
+            lap_max_ey_ = std::abs(e_y);
+            lap_min_clearance_ = min_cone_clearance;
+            RCLCPP_INFO(this->get_logger(), "⏱️  Lap timing started (Lap 1: Standing Start)...");
+        }
+
+        if (lap_timer_started_) {
+            lap_max_speed_ = std::max(lap_max_speed_, current_speed_);
+            lap_max_ey_ = std::max(lap_max_ey_, std::abs(e_y));
+            lap_min_clearance_ = std::min(lap_min_clearance_, min_cone_clearance);
+
+            // Wrap-around detection on s indicates crossing finish line
+            if (s < last_s_raw_ - 0.5 * track_len) {
+                double lap_time = current_time - lap_start_time_;
+                if (lap_time > 5.0) {
+                    RCLCPP_INFO(this->get_logger(),
+                        "\n"
+                        "╔═════════════════════════════════════════════════════════════════════════╗\n"
+                        "║ 🏁 LAP %zu COMPLETED! %-49s ║\n"
+                        "║    ⏱️  Lap Time:          %6.3f s                                      ║\n"
+                        "║    🚀 Top Speed:         %6.2f m/s (%5.1f km/h)                        ║\n"
+                        "║    📐 Max Lateral Error: %6.3f m                                      ║\n"
+                        "║    🛡️  Min Clearance:     %6.3f m                                      ║\n"
+                        "╚═════════════════════════════════════════════════════════════════════════╝",
+                        current_lap_idx_,
+                        (current_lap_idx_ == 1) ? "[STANDING START]" : "[FLYING LAP]",
+                        lap_time,
+                        lap_max_speed_, lap_max_speed_ * 3.6,
+                        lap_max_ey_,
+                        lap_min_clearance_);
+
+                    current_lap_idx_++;
+                    lap_start_time_ = current_time;
+                    lap_max_speed_ = current_speed_;
+                    lap_max_ey_ = std::abs(e_y);
+                    lap_min_clearance_ = min_cone_clearance;
+                }
+            }
+        }
+        last_s_raw_ = s;
+    }
 
     double dt = std::max(control_dt_, 1e-4);
     double jerk_lon = (last_acceleration_cmd_ - prev_filtered_accel_) / dt;
@@ -618,10 +706,18 @@ std::tuple<double, double, double, double> MPCPacsimNode::publishControls(
                                    last_acceleration_cmd_ + max_delta_up);
     last_acceleration_cmd_ = a_filtered;
 
-    // 2. Steering setpoint
+    // 2. Steering setpoint with physical rack slew-rate protection and high-frequency chatter rejection
+    double max_steer_step = (max_steer_rate_ / steering_ratio_) * control_dt_;
+    double steer_rate_limited = std::clamp(steering_wheel_rad, 
+                                           last_handwheel_cmd_ - max_steer_step, 
+                                           last_handwheel_cmd_ + max_steer_step);
+    // 1st-order low-pass filter (cutoff ~15 Hz at 100 Hz sampling) eliminates numerical chatter on straightaways
+    double steer_filtered = 0.60 * steer_rate_limited + 0.40 * last_handwheel_cmd_;
+    last_handwheel_cmd_ = steer_filtered;
+
     pacsim::msg::StampedScalar steer_msg;
     steer_msg.stamp = stamp;
-    steer_msg.value = steering_wheel_rad;
+    steer_msg.value = steer_filtered;
     steering_pub_->publish(steer_msg);
 
     // 3. Wheel Torques mapping (matching etdv_pid baseline)

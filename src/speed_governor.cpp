@@ -248,19 +248,12 @@ double SpeedGovernor::computeEffectiveMaxAccel(
     double standing_launch_accel,
     double steer_derate, double max_steer) const
 {
-    // 1. Determine low-speed acceleration capability:
-    // When going straight (steering ~ 0), allow energetic launch (standing start on straights).
-    // When wheels are turned (hairpin apex / corner exit), derate down to low_speed_max_accel to prevent snaking.
-    double steer_abs = std::abs(steering_angle);
-    double steer_norm = std::clamp(steer_abs / max_steer, 0.0, 1.0);
+    // 1. Standing start launch boost: ONLY active from standstill (v < 1.2 m/s) on straight lines
+    if (current_speed < 1.2 && std::abs(steering_angle) < 0.08) {
+        return standing_launch_accel;
+    }
 
-    // Steering gate: within ~6 deg (0.10 rad), car is essentially straight
-    constexpr double steer_gate_thresh = 0.10;
-    double steer_gate = std::clamp(steer_abs / steer_gate_thresh, 0.0, 1.0);
-    double low_speed_cap = low_speed_max_accel + 
-        (standing_launch_accel - low_speed_max_accel) * std::max(0.0, 1.0 - steer_gate * steer_gate);
-
-    // 2. Speed blend: smoothly transition from low_speed_cap to full_max_accel as speed builds
+    // 2. Continuous speed blend: smoothly transition from low-speed to high-speed regime
     double speed_ratio = 0.0;
     if (current_speed <= low_speed_thresh) {
         speed_ratio = 0.0;
@@ -269,12 +262,17 @@ double SpeedGovernor::computeEffectiveMaxAccel(
     } else {
         speed_ratio = (current_speed - low_speed_thresh) / (high_speed_thresh - low_speed_thresh);
     }
-    double base_accel = low_speed_cap + speed_ratio * (full_max_accel - low_speed_cap);
 
-    // 3. Corner-exit steering derating (traction control: throttle can only roll on as steering unwinds)
-    double traction_factor = std::max(0.20, 1.0 - steer_derate * steer_norm);
+    // 3. Progressive corner-exit derating based on steering angle (smooth friction circle approximation)
+    // When wheels are straight (steer_norm = 0), full acceleration is available.
+    // When wheels are turned in a corner (steer_norm > 0), acceleration is progressively throttled.
+    double steer_norm = std::clamp(std::abs(steering_angle) / max_steer, 0.0, 1.0);
+    double traction_factor = std::clamp(1.0 - steer_derate * (steer_norm * steer_norm), 0.30, 1.0);
 
-    return base_accel * traction_factor;
+    double low_speed_target = low_speed_max_accel + (full_max_accel - low_speed_max_accel) * (1.0 - steer_norm);
+    double a_eff = low_speed_target + speed_ratio * (full_max_accel - low_speed_target);
+
+    return std::clamp(a_eff * traction_factor, low_speed_max_accel * 0.5, full_max_accel);
 }
 
 std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
@@ -283,7 +281,8 @@ std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
     double current_speed,
     size_t num_output_stages,
     double a_brake,
-    double a_accel) const
+    double a_accel,
+    const std::vector<double>& free_widths) const
 {
     (void)current_speed;
     (void)a_accel;
@@ -293,9 +292,19 @@ std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
     }
 
     // 1. Compute steady-state cornering limit for each point
+    // If corridor free_widths are available, compute effective racing line curvature:
+    // kappa_eff = |kappa| / (1.0 + |kappa| * w_free)
+    // reflecting the wider radius (out-in-out) achievable within the cone corridor.
     std::vector<double> v_prof(M);
+    bool use_corridor = (!free_widths.empty() && free_widths.size() >= M);
+
     for (size_t i = 0; i < M; ++i) {
-        v_prof[i] = computeSafeSpeed(kappas[i]);
+        double k_eff = std::abs(kappas[i]);
+        if (use_corridor && free_widths[i] > 0.05 && k_eff > 1e-4) {
+            double w_free = std::clamp(free_widths[i], 0.0, 0.85);
+            k_eff = k_eff / (1.0 + k_eff * w_free);
+        }
+        v_prof[i] = computeSafeSpeed(k_eff);
     }
 
     // 2. Backward Braking Pass:
