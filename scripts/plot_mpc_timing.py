@@ -17,9 +17,9 @@ import matplotlib.pyplot as plt
 
 def main():
     parser = argparse.ArgumentParser(description="Plot per-iteration MPC execution timings.")
-    parser.add_argument("--timing-file", type=str, default="/workspace/MPC_logs/mpc_timing.csv",
+    parser.add_argument("--timing-file", type=str, default="MPC_logs/mpc_timing.csv",
                         help="Path to mpc_timing.csv")
-    parser.add_argument("--output", type=str, default="/workspace/MPC_logs/timing_report.png",
+    parser.add_argument("--output", type=str, default="MPC_logs/timing_report.png",
                         help="Output image path")
     args = parser.parse_args()
 

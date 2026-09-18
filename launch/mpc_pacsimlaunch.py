@@ -27,7 +27,7 @@ def generate_launch_description():
     track_name_arg = DeclareLaunchArgument(
         "track_name",
         default_value="/workspace/pacsim/tracks/FSE23_dense_centerline.yaml",
-        description="Track file name in pacsim tracks dir (e.g. FSE23_centerline.yaml, FSG21_centerline.yaml, FSE24_centerline.yaml) or full path"
+        description="Track file name in pacsim tracks dir (e.g. FSE23_dense_centerline.yaml, FSG21_dense_centerline.yaml) or full path"
     )
     discipline_arg = DeclareLaunchArgument(
         "discipline",
@@ -41,7 +41,7 @@ def generate_launch_description():
     )
     log_dir_arg = DeclareLaunchArgument(
         "log_dir",
-        default_value="/workspace/MPC_logs",
+        default_value="MPC_logs",
         description="MPC logger output directory"
     )
     default_mpc_params_path = os.path.join(
@@ -146,11 +146,23 @@ def generate_launch_description():
                 'max_lateral_error': 3.0,
                 'emergency_stop': False,
                 'default_track_width': 3.0,
-                'track_margin': 0.90,
+                'track_margin': 0.80,
                 'effective_mu': 1.0,
-                'max_accel': 3.5,
+                'max_accel': 4.8,
                 'min_accel': -8.0,
-                'stop_on_trajectory_complete': False
+                'a_brake': 5.0,
+                'stop_on_trajectory_complete': False,
+                'speed_scale': 1.00,
+                'max_straight_speed': 25.0,
+                'speed_limits_csv': '',
+                'low_speed_threshold': 6.0,
+                'high_speed_threshold': 12.0,
+                'standing_launch_accel': 4.8,
+                'low_speed_max_accel': 2.20,
+                'corner_exit_steer_derate': 0.55,
+                'max_accel_slew_rate': 9.0,
+                'max_decel_slew_rate': 25.0,
+                'understeer_gradient': 0.0008,
             })
 
         overrides = {

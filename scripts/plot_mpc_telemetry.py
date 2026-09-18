@@ -33,9 +33,9 @@ def load_logs(log_dir, prefix):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare PID vs MPC PACSim telemetry logs.")
-    parser.add_argument("--pid-dir", type=str, default="/workspace/PID_logs", help="Directory of PID logs")
-    parser.add_argument("--mpc-dir", type=str, default="/workspace/MPC_logs", help="Directory of MPC logs")
-    parser.add_argument("--output", type=str, default="/workspace/comparison_report.png", help="Output plot filename")
+    parser.add_argument("--pid-dir", type=str, default="PID_logs", help="Directory of PID logs")
+    parser.add_argument("--mpc-dir", type=str, default="MPC_logs", help="Directory of MPC logs")
+    parser.add_argument("--output", type=str, default="comparison_report.png", help="Output plot filename")
     args = parser.parse_args()
 
     pid_state, pid_ctrl = load_logs(args.pid_dir, "pid")

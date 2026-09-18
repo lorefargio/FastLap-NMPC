@@ -298,7 +298,7 @@ def run_sentinel(log_dir: str, track_name: str, target_laps: int = 2,
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Multi-Track Lap Sentinel for FastLap NMPC (3 Gate Passes)")
-    parser.add_argument("--log-dir", type=str, default="/workspace/MPC_logs",
+    parser.add_argument("--log-dir", type=str, default="MPC_logs",
                         help="Directory where mpc_telemetry.csv is written")
     parser.add_argument("--track", type=str, default="FSE23",
                         help="Track identifier (e.g. FSE23, FSG21, FSE24)")

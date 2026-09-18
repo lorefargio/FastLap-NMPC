@@ -21,7 +21,7 @@ MPCPacsimNode::MPCPacsimNode()
     // Parameter declarations & loading (type-safe for both float and integer YAML values)
     this->declare_parameter("emergency_stop", false);
     this->declare_parameter("stop_on_trajectory_complete", false);
-    this->declare_parameter("log_dir", "/workspace/MPC_logs");
+    this->declare_parameter("log_dir", "MPC_logs");
     this->declare_parameter("centerline_topic", "/pacsim/track/centerline_smoothed");
     this->declare_parameter("speed_limits_csv", "");
 
@@ -32,21 +32,21 @@ MPCPacsimNode::MPCPacsimNode()
     steering_ratio_ = declareAndGetDoubleParam("outer_steering_ratio", 0.23);
     max_lateral_error_ = declareAndGetDoubleParam("max_lateral_error", 3.0);
     default_track_width_ = declareAndGetDoubleParam("default_track_width", 3.0);
-    track_margin_ = declareAndGetDoubleParam("track_margin", 0.90);
+    track_margin_ = declareAndGetDoubleParam("track_margin", 0.80);
     effective_mu_ = declareAndGetDoubleParam("effective_mu", 1.0);
-    max_accel_ = declareAndGetDoubleParam("max_accel", 3.5);
+    max_accel_ = declareAndGetDoubleParam("max_accel", 4.8);
     min_accel_ = declareAndGetDoubleParam("min_accel", -8.0);
-    speed_scale_ = declareAndGetDoubleParam("speed_scale", 0.90);
-    max_straight_speed_ = declareAndGetDoubleParam("max_straight_speed", 22.5);
-    low_speed_threshold_ = declareAndGetDoubleParam("low_speed_threshold", 7.0);
-    high_speed_threshold_ = declareAndGetDoubleParam("high_speed_threshold", 13.0);
-    standing_launch_accel_ = declareAndGetDoubleParam("standing_launch_accel", 2.8);
-    low_speed_max_accel_ = declareAndGetDoubleParam("low_speed_max_accel", 0.85);
-    corner_exit_steer_derate_ = declareAndGetDoubleParam("corner_exit_steer_derate", 0.75);
-    max_accel_slew_rate_ = declareAndGetDoubleParam("max_accel_slew_rate", 6.0);
+    speed_scale_ = declareAndGetDoubleParam("speed_scale", 1.00);
+    max_straight_speed_ = declareAndGetDoubleParam("max_straight_speed", 25.0);
+    low_speed_threshold_ = declareAndGetDoubleParam("low_speed_threshold", 6.0);
+    high_speed_threshold_ = declareAndGetDoubleParam("high_speed_threshold", 12.0);
+    standing_launch_accel_ = declareAndGetDoubleParam("standing_launch_accel", 4.8);
+    low_speed_max_accel_ = declareAndGetDoubleParam("low_speed_max_accel", 2.20);
+    corner_exit_steer_derate_ = declareAndGetDoubleParam("corner_exit_steer_derate", 0.55);
+    max_accel_slew_rate_ = declareAndGetDoubleParam("max_accel_slew_rate", 9.0);
     max_decel_slew_rate_ = declareAndGetDoubleParam("max_decel_slew_rate", 25.0);
-    a_brake_ = declareAndGetDoubleParam("a_brake", 5.8);
-    understeer_gradient_ = declareAndGetDoubleParam("understeer_gradient", 0.0012);
+    a_brake_ = declareAndGetDoubleParam("a_brake", 5.0);
+    understeer_gradient_ = declareAndGetDoubleParam("understeer_gradient", 0.0008);
 
     centerline_topic_ = this->get_parameter("centerline_topic").as_string();
     speed_limits_csv_ = this->get_parameter("speed_limits_csv").as_string();

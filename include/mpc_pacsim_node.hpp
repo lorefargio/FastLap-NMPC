@@ -91,25 +91,25 @@ private:
     double steering_ratio_ = 0.23;
     double max_lateral_error_ = 3.0;
     double default_track_width_ = 3.0;
-    double track_margin_ = 0.85;
+    double track_margin_ = 0.80;
     double effective_mu_ = 1.0;
-    double max_accel_ = 3.5;
+    double max_accel_ = 4.8;
     double min_accel_ = -8.0;
-    double speed_scale_ = 0.90;
-    double max_straight_speed_ = 22.5;
+    double speed_scale_ = 1.00;
+    double max_straight_speed_ = 25.0;
     std::string speed_limits_csv_ = "";
     std::string centerline_topic_ = "/pacsim/track/centerline_smoothed";
 
     // Launch & Corner Exit Acceleration Governor
-    double low_speed_threshold_ = 7.0;
-    double high_speed_threshold_ = 13.0;
-    double standing_launch_accel_ = 2.8;
-    double low_speed_max_accel_ = 0.85;
-    double corner_exit_steer_derate_ = 0.75;
-    double max_accel_slew_rate_ = 6.0;
+    double low_speed_threshold_ = 6.0;
+    double high_speed_threshold_ = 12.0;
+    double standing_launch_accel_ = 4.8;
+    double low_speed_max_accel_ = 2.20;
+    double corner_exit_steer_derate_ = 0.55;
+    double max_accel_slew_rate_ = 9.0;
     double max_decel_slew_rate_ = 25.0;
-    double a_brake_ = 5.8;
-    double understeer_gradient_ = 0.0012; // rad / (m/s^2) for tire slip angle compensation
+    double a_brake_ = 5.0;
+    double understeer_gradient_ = 0.0008; // rad / (m/s^2) for tire slip angle compensation
 
     // Counters & Status Flags
     size_t control_loop_count_ = 0;

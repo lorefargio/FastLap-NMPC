@@ -44,12 +44,12 @@ def load_yaml_params() -> dict:
     params = {
         "mpc_dt": 0.05,
         "default_track_width": 3.0,
-        "track_margin": 0.90,
+        "track_margin": 0.80,
         "effective_mu": 1.0,
-        "max_accel": 3.5,
+        "max_accel": 4.8,
         "min_accel": -8.0,
-        "max_straight_speed": 22.5,
-        "speed_scale": 0.90,
+        "max_straight_speed": 25.0,
+        "speed_scale": 1.00,
     }
 
     if os.path.exists(yaml_path):
@@ -167,7 +167,7 @@ def create_ocp() -> AcadosOcp:
     # Constraints & Bounds
     # =========================================================================
     # Track margin from YAML (car half-width + safety margin)
-    car_margin = float(params.get("track_margin", 0.90))
+    car_margin = float(params.get("track_margin", 0.80))
     e_y_min = - (w_r_init - car_margin)
     e_y_max =   (w_l_init - car_margin)
 

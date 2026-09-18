@@ -22,7 +22,7 @@ public:
      * @param speed_scale Multiplicative scale factor on speed limit (e.g. 0.90 for 10% safety margin).
      * @param max_straight_speed Maximum speed on straights [m/s].
      */
-    void configure(double speed_scale = 0.90, double max_straight_speed = 22.5);
+    void configure(double speed_scale = 1.00, double max_straight_speed = 25.0);
 
     /**
      * @brief Load curvature limits from a CSV file. If file cannot be read, falls back to embedded table.
@@ -67,10 +67,10 @@ public:
      */
     double computeEffectiveMaxAccel(
         double current_speed, double steering_angle,
-        double low_speed_thresh = 7.0, double high_speed_thresh = 13.0,
-        double low_speed_max_accel = 0.85, double full_max_accel = 3.5,
-        double standing_launch_accel = 2.8,
-        double steer_derate = 0.75, double max_steer = 0.52) const;
+        double low_speed_thresh = 6.0, double high_speed_thresh = 12.0,
+        double low_speed_max_accel = 2.20, double full_max_accel = 4.8,
+        double standing_launch_accel = 4.8,
+        double steer_derate = 0.55, double max_steer = 0.52) const;
 
     /**
      * @brief Compute a dynamically-feasible speed profile along preview coordinates using a backward braking pass.
@@ -79,8 +79,8 @@ public:
      * @param kappas Vector of curvatures kappa corresponding to s_stages.
      * @param current_speed Current vehicle speed [m/s].
      * @param num_output_stages Number of stages to return (e.g. MPC_N + 1).
-     * @param a_brake Maximum comfortable braking deceleration [m/s^2] (e.g. 3.5 m/s^2).
-     * @param a_accel Maximum comfortable acceleration [m/s^2] (e.g. 2.5 m/s^2).
+     * @param a_brake Maximum comfortable braking deceleration [m/s^2] (e.g. 5.0 m/s^2).
+     * @param a_accel Maximum comfortable acceleration [m/s^2] (e.g. 4.8 m/s^2).
      * @return Vector of target speeds [m/s] for stages 0 .. num_output_stages - 1.
      */
     std::vector<double> computeFeasibleSpeedProfile(
@@ -88,8 +88,8 @@ public:
         const std::vector<double>& kappas,
         double current_speed,
         size_t num_output_stages,
-        double a_brake = 3.5,
-        double a_accel = 2.5,
+        double a_brake = 5.0,
+        double a_accel = 4.8,
         const std::vector<double>& free_widths = {}) const;
 
     /**
@@ -100,8 +100,8 @@ public:
 private:
     void initDefaultTables();
 
-    double speed_scale_{0.90};
-    double max_straight_speed_{22.5};
+    double speed_scale_{1.00};
+    double max_straight_speed_{25.0};
 
     // Table of (kappa [1/m], v_max [m/s]) sorted by kappa ascending
     std::vector<std::pair<double, double>> speed_table_;
