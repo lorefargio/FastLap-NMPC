@@ -26,7 +26,7 @@ def generate_launch_description():
     # Launch arguments
     track_name_arg = DeclareLaunchArgument(
         "track_name",
-        default_value="/workspace/pacsim/tracks/FSE23_dense_centerline.yaml",
+        default_value="/workspace/pacsim/tracks/FSG23_dense_centerline.yaml",
         description="Track file name in pacsim tracks dir (e.g. FSE23_dense_centerline.yaml, FSG21_dense_centerline.yaml) or full path"
     )
     discipline_arg = DeclareLaunchArgument(

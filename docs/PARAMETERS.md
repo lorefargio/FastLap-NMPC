@@ -62,7 +62,7 @@ All operational parameters for the controller are centralized in [`config/mpc_pa
 - At every horizon stage $k \in [1, N-1]$, the controller evaluates the local corridor bounds from the cubic splines fitted to the track cones:
 
   $$
-  e_{y,\min,k} = -(w_{r,k} - \text{margin}), \quad e_{y,\max,k} = w_{l,k} - \text{margin}
+  e_{y,\min,k} = -(w_{r,k} - d_{\mathrm{margin}}), \quad e_{y,\max,k} = w_{l,k} - d_{\mathrm{margin}}
   $$
 
 - In acados, these bounds are enforced as soft constraints with high quadratic penalties ($Z_l = 3000, Z_u = 3000$). This guarantees QP feasibility even during sharp evasive maneuvers while strictly repelling the car from cone limits.
@@ -78,16 +78,16 @@ All operational parameters for the controller are centralized in [`config/mpc_pa
 - The `SpeedGovernor` module queries empirical vehicle limit curves (`Velocità limite.xlsx`) to determine safe cornering velocities as a function of path curvature $\kappa$:
 
   $$
-  v_{\text{safe}}(\kappa) = \min\left(v_{\text{straight}},\, v_{\text{empirical}}(\kappa_{\text{eff}})\right) \cdot \text{speed\_scale}
+  v_{\mathrm{safe}}(\kappa) = \min\left(v_{\mathrm{straight}}, v_{\mathrm{empirical}}(\kappa_{\mathrm{eff}})\right) \cdot s_{\mathrm{scale}}
   $$
 
 - **Corridor-Aware Effective Curvature**:
 
   $$
-  \kappa_{\text{eff}} = \frac{|\kappa|}{1.0 + |\kappa| \cdot W_{\text{free}}}
+  \kappa_{\mathrm{eff}} = \frac{|\kappa|}{1.0 + |\kappa| \cdot W_{\mathrm{free}}}
   $$
 
-  where $W_{\text{free}} = \min(w_l, w_r) - \text{margin}$. This accounts for the larger effective turning radius $R_{\text{eff}} = R_{\text{centerline}} + W_{\text{free}}$ achievable by an out-in-out racing line.
+  where $W_{\mathrm{free}} = \min(w_l, w_r) - d_{\mathrm{margin}}$. This accounts for the larger effective turning radius $R_{\mathrm{eff}} = R_{\mathrm{centerline}} + W_{\mathrm{free}}$ achievable by an out-in-out racing line.
 - Setting `speed_scale = 1.00` unlocks the vehicle's full empirical grip limit.
 
 #### `a_brake` (5.0 m/s²)
@@ -95,7 +95,7 @@ All operational parameters for the controller are centralized in [`config/mpc_pa
 - The `SpeedGovernor` performs a **backward-pass dynamic braking integration** over an extended preview lookahead of up to 65 m:
 
   $$
-  v[i] = \min\left(v[i],\, \sqrt{v[i+1]^2 + 2 \cdot a_{\text{brake}} \cdot \Delta s}\right)
+  v[i] = \min\left(v[i], \sqrt{v[i+1]^2 + 2 a_{\mathrm{brake}} \Delta s}\right)
   $$
 
 - Setting `a_brake = 5.0 m/s²` initiates straight-line braking well before corner turn-in, preventing understeer push off the circuit.
@@ -108,48 +108,48 @@ All operational parameters for the controller are centralized in [`config/mpc_pa
 - To prevent snap oversteer / spinouts on corner exits when the car commands high throttle while tires are under heavy lateral cornering load, `mpc_pacsim_node` applies a real-time Kamm circle envelope:
 
   $$
-  a_{\text{lat}} \approx \frac{v^2}{L} \tan |\delta|
+  a_{\mathrm{lat}} \approx \frac{v^2}{L} \tan |\delta|
   $$
 
   $$
-  a_{\text{lon,kamm}} = \sqrt{\max\left(0.4,\, (\mu g \cdot 0.92)^2 - a_{\text{lat}}^2\right)}
+  a_{\mathrm{lon,kamm}} = \sqrt{\max\left(0.4, (0.92 \mu g)^2 - a_{\mathrm{lat}}^2\right)}
   $$
 
   $$
-  a_{\text{eff,max}} = \min\left(a_{\text{eff,max}},\, a_{\text{lon,kamm}}\right)
+  a_{\mathrm{eff,max}} = \min\left(a_{\mathrm{eff,max}}, a_{\mathrm{lon,kamm}}\right)
   $$
 
-- When cornering hard at 1.8 g, longitudinal acceleration is derated to safeguard lateral grip. As the steering straightens on corner exit, $a_{\text{eff,max}} \to 4.8\text{ m/s}^2$, launching the car at full motor power.
+- When cornering hard at 1.8 g, longitudinal acceleration is derated to safeguard lateral grip. As the steering straightens on corner exit, $a_{\mathrm{eff,max}} \to 4.8\text{ m/s}^2$, launching the car at full motor power.
 
 #### Dynamic Launch Governor (`standing_launch_accel = 4.8`, `low_speed_max_accel = 2.20`)
 - **Standing Start ($v < 1.0\text{ m/s}, |\delta| < 0.08\text{ rad}$)**: Commands full 4.8 m/s² launch drive, cutting standing start lap penalties to $< 0.9\text{ s}$.
 - **Hairpin Exit**: When navigating tight curves at low speed, acceleration smoothly blends according to steering angle:
 
   $$
-  \text{traction\_factor} = \operatorname{clamp}\left(1.0 - \text{corner\_exit\_steer\_derate} \cdot \left(\frac{|\delta|}{\delta_{\max}}\right)^2,\, 0.30,\, 1.0\right)
+  k_{\mathrm{traction}} = \min\left(1.0, \max\left(0.30, 1.0 - c_{\mathrm{derate}} \cdot \left(\frac{|\delta|}{\delta_{\max}}\right)^2\right)\right)
   $$
 
-  This completely eliminates yaw wobble and chatter on slow corner exits.
+  where $c_{\mathrm{derate}} = 0.55$ (`corner_exit_steer_derate`). This completely eliminates yaw wobble and chatter on slow corner exits.
 
 ---
 
 ### Category E: Actuator Dynamics & Slew Rate Limiting
 
-#### `max_accel_slew_rate` (8.0 m/s³) & `max_decel_slew_rate` (25.0 m/s³)
+#### `max_accel_slew_rate` (9.0 m/s³) & `max_decel_slew_rate` (25.0 m/s³)
 - Slew rate filtering protects the electric motors, inverters, and tire contact patches from shock loads:
 
   $$
-  a_{\text{cmd},k} \in \left[a_{\text{cmd},k-1} - \text{max\_decel\_slew} \cdot \Delta t,\, a_{\text{cmd},k-1} + \text{max\_accel\_slew} \cdot \Delta t\right]
+  a_{\mathrm{cmd},k} \in \left[a_{\mathrm{cmd},k-1} - r_{\mathrm{decel}} \cdot \Delta t, a_{\mathrm{cmd},k-1} + r_{\mathrm{accel}} \cdot \Delta t\right]
   $$
 
-- Acceleration rises at up to 8.0 m/s³ for responsive torque build-up.
+- Acceleration rises at up to 9.0 m/s³ for responsive torque build-up.
 - Deceleration is permitted up to 25.0 m/s³ to ensure rapid stopping response during emergency braking.
 
 #### `understeer_gradient` (0.0008 rad/(m/s²))
 - Compensates for tire cornering compliance and pneumatic trail at high lateral loads:
 
   $$
-  \delta_{\text{dyn}} = K_{\text{us}} \cdot v^2 \cdot \kappa
+  \delta_{\mathrm{dyn}} = K_{\mathrm{us}} \cdot v^2 \cdot \kappa
   $$
 
-- Blended in progressively when $v > 7.0\text{ m/s}$ and $|a_{\text{lat}}| > 2.5\text{ m/s}^2$, preventing understeer push at the limits of adhesion.
+- Blended in progressively when $v > 7.0\text{ m/s}$ and $|a_{\mathrm{lat}}| > 2.5\text{ m/s}^2$, preventing understeer push at the limits of adhesion.

@@ -77,7 +77,7 @@ Taking time derivatives with respect to the moving Frenet-Serret frame:
    *Singularity Protection*: To guarantee numerical stability in acados if $e_y \to 1/\kappa$, the denominator is lower-bounded:
 
    $$
-   \operatorname{denom} = \max\left(0.05,\, 1 - e_y \kappa(s)\right)
+   d_{\min} = \max\left(0.05, 1 - e_y \kappa(s)\right)
    $$
 
 2. **Lateral error evolution ($\dot{e}_y$)**:
@@ -89,7 +89,7 @@ Taking time derivatives with respect to the moving Frenet-Serret frame:
 3. **Heading error rate ($\dot{e}_\psi$)**:
 
    $$
-   \dot{e}_\psi = \dot{\psi}_{\text{veh}} - \kappa(s) \dot{s} = \frac{v \cos \beta}{L} \tan \delta - \kappa(s) \frac{v \cos(e_\psi + \beta)}{\operatorname{denom}}
+   \dot{e}_\psi = \dot{\psi}_{\mathrm{veh}} - \kappa(s) \dot{s} = \frac{v \cos \beta}{L} \tan \delta - \kappa(s) \frac{v \cos(e_\psi + \beta)}{d_{\min}}
    $$
 
 4. **Longitudinal velocity ($\dot{v}$)**:
@@ -111,7 +111,7 @@ Taking time derivatives with respect to the moving Frenet-Serret frame:
 The explicit ordinary differential equation (ODE) vector field is:
 
 $$
-\dot{\mathbf{x}} = \mathbf{f}_{\text{expl}}(\mathbf{x}, \mathbf{u}, \mathbf{p}) = \begin{bmatrix}
+\dot{\mathbf{x}} = \mathbf{f}_{\mathrm{expl}}(\mathbf{x}, \mathbf{u}, \mathbf{p}) = \begin{bmatrix}
 \frac{v \cos(e_\psi + \beta)}{\max(0.05, 1 - e_y \kappa)} \\
 v \sin(e_\psi + \beta) \\
 \frac{v \cos\beta}{L} \tan\delta - \kappa \dot{s} \\
@@ -166,24 +166,24 @@ flowchart LR
 Combined tire forces are bounded by available tire-road friction $\mu$:
 
 $$
-\left(\frac{a}{\mu g}\right)^2 + \left(\frac{a_{\text{lat}}}{\mu g}\right)^2 \le 1.0 + s_{\text{friction}}
+\left(\frac{a}{\mu g}\right)^2 + \left(\frac{a_{\mathrm{lat}}}{\mu g}\right)^2 \le 1.0 + s_{\mathrm{friction}}
 $$
 
-where $s_{\text{friction}} \ge 0$ is a soft slack variable penalized quadratically ($Z_l = 3000.0, Z_u = 3000.0$) in the OCP cost to guarantee QP feasibility during sharp corner entry transitions.
+where $s_{\mathrm{friction}} \ge 0$ is a soft slack variable penalized quadratically ($Z_l = 3000.0, Z_u = 3000.0$) in the OCP cost to guarantee QP feasibility during sharp corner entry transitions.
 
 ### 4.2 Runtime Kamm Circle Grip Capping
 In the ROS 2 node, before sending control bounds to the acados solver, dynamic grip capping protects against sudden snap oversteer during high-g corner exits:
 
 $$
-a_{\text{lat}} \approx \frac{v^2}{L} \tan|\delta|
+a_{\mathrm{lat}} \approx \frac{v^2}{L} \tan|\delta|
 $$
 
 $$
-a_{\text{lon,kamm}} = \sqrt{\max\left(0.4,\, (\mu g \cdot 0.92)^2 - a_{\text{lat}}^2\right)}
+a_{\mathrm{lon,kamm}} = \sqrt{\max\left(0.4, (0.92 \mu g)^2 - a_{\mathrm{lat}}^2\right)}
 $$
 
 $$
-a_{\text{eff,max}} = \min\left(a_{\text{eff,max}},\, a_{\text{lon,kamm}}\right)
+a_{\mathrm{eff,max}} = \min\left(a_{\mathrm{eff,max}}, a_{\mathrm{lon,kamm}}\right)
 $$
 
 When cornering hard at 1.8 g, longitudinal acceleration is dynamically capped, preventing tire breakaway. As the vehicle straightens on exit, full motor acceleration (4.8 m/s²) is unlocked.
@@ -195,35 +195,35 @@ When cornering hard at 1.8 g, longitudinal acceleration is dynamically capped, p
 The discrete-time optimal control problem over a prediction horizon of $N = 30$ stages with sampling time $\Delta t = 0.05\text{ s}$ ($T_f = 1.5\text{ s}$) is formulated as:
 
 $$
-\min_{\mathbf{x}_{0:N}, \mathbf{u}_{0:N-1}, \mathbf{s}_{0:N-1}} \sum_{k=0}^{N-1} \left( \frac{1}{2} \|\mathbf{y}_k - \mathbf{y}_{\text{ref},k}\|_{\mathbf{W}}^2 + z_l^T s_{l,k} + z_u^T s_{u,k} + \frac{1}{2} s_{l,k}^T Z_l s_{l,k} + \frac{1}{2} s_{u,k}^T Z_u s_{u,k} \right) + \frac{1}{2} \|\mathbf{y}_N - \mathbf{y}_{\text{ref},N}\|_{\mathbf{W}_e}^2
+\min_{\mathbf{x}_{0:N}, \mathbf{u}_{0:N-1}, \mathbf{s}_{0:N-1}} \sum_{k=0}^{N-1} \left( \frac{1}{2} \|\mathbf{y}_k - \mathbf{y}_{\mathrm{ref},k}\|_{\mathbf{W}}^2 + z_l^T s_{l,k} + z_u^T s_{u,k} + \frac{1}{2} s_{l,k}^T Z_l s_{l,k} + \frac{1}{2} s_{u,k}^T Z_u s_{u,k} \right) + \frac{1}{2} \|\mathbf{y}_N - \mathbf{y}_{\mathrm{ref},N}\|_{\mathbf{W}_e}^2
 $$
 
 ### 5.1 Residual Vectors
 - **Stage Residual**:
 
   $$
-  \mathbf{y}_k = [v_k,\, e_{y,k},\, e_{\psi,k},\, \delta_k,\, a_k,\, v_{\delta,k}]^T
+  \mathbf{y}_k = [v_k, e_{y,k}, e_{\psi,k}, \delta_k, a_k, v_{\delta,k}]^T
   $$
 
   $$
-  \mathbf{y}_{\text{ref},k} = [v_{\text{target},k},\, 0,\, 0,\, 0,\, 0,\, 0]^T
+  \mathbf{y}_{\mathrm{ref},k} = [v_{\mathrm{target},k}, 0, 0, 0, 0, 0]^T
   $$
 
 - **Terminal Residual**:
 
   $$
-  \mathbf{y}_N = [v_N,\, e_{y,N},\, e_{\psi,N},\, \delta_N]^T
+  \mathbf{y}_N = [v_N, e_{y,N}, e_{\psi,N}, \delta_N]^T
   $$
 
   $$
-  \mathbf{y}_{\text{ref},N} = [v_{\text{target},N},\, 0,\, 0,\, 0]^T
+  \mathbf{y}_{\mathrm{ref},N} = [v_{\mathrm{target},N}, 0, 0, 0]^T
   $$
 
 ### 5.2 Proven Racing Weighting Matrices
 The weighting matrices are tuned for autonomous contouring optimization:
 
 $$
-\mathbf{W} = \operatorname{diag}\begin{bmatrix}
+\mathbf{W} = \mathrm{diag}\begin{bmatrix}
 w_v & = & 4.00 & \text{(High-speed progress tracking)} \\
 q_{e_y} & = & 0.08 & \text{(Mild centering regularizer: unlocks apex cutting)} \\
 q_{e_\psi} & = & 0.85 & \text{(Optimal slip angle alignment with exit stability)} \\
@@ -233,7 +233,7 @@ r_{v_\delta} & = & 3.60 & \text{(Steering rate damping: eliminates chatter)}
 \end{bmatrix}
 $$
 
-Terminal weights are scaled by $1.5\times$ ($\mathbf{W}_e = \operatorname{diag}[6.0, 0.12, 1.28, 0.35]$).
+Terminal weights are scaled by $1.5\times$ ($\mathbf{W}_e = \mathrm{diag}(6.0, 0.12, 1.28, 0.35)$).
 
 ### 5.3 Stage-Dependent Box Constraints
 
@@ -256,6 +256,9 @@ To execute within the strict $10.0\text{ ms}$ control budget of ROS 2 at 100 Hz,
    - Linearizes constraints around the previous solution trajectory.
    - Condenses the horizon using Partial Condensing ($N_{\text{cond}} = 5$).
 2. **Feedback Phase (immediate on state arrival)**:
-   - Injects the measured initial state $\mathbf{x}_0 = [0.0, e_y, e_\psi, v, \delta]^T$.
+   - Injects the measured initial state:
+     $$
+     \mathbf{x}_0 = [0.0, e_y, e_\psi, v, \delta]^T
+     $$
    - Executes a single QP solve using **HPIPM** vectorized with **BLASFEO**.
    - Extracts optimal control $\mathbf{u}_0^* = [a_0^*, v_{\delta,0}^*]^T$ and streams to PACSim in $< 1.5\text{ ms}$.

@@ -5,7 +5,6 @@
 [![Python](https://img.shields.io/badge/Python-3.10-3776AB.svg?logo=python)](https://www.python.org/)
 [![acados](https://img.shields.io/badge/acados-SQP--RTI-brightgreen.svg)](https://docs.acados.org/)
 [![CasADi](https://img.shields.io/badge/CasADi-3.6+-orange.svg)](https://web.casadi.org/)
-![Safety](https://img.shields.io/badge/Cone%20Safety-40.0%2F40%20%280%20Cones%29-brightgreen.svg)
 
 High-performance, real-time **Autonomous Racing Non-Linear Model Predictive Controller (MPCC)** designed for Formula Student autonomous vehicles in the **PACSim** simulation environment.
 
@@ -16,10 +15,8 @@ Formulated in curvilinear **Frenet-Serret coordinates**, the controller optimize
 ## 📑 Table of Contents
 - [Key Features](#key-features)
 - [Repository Structure](#repository-structure)
-- [Quickstart Guide](#quickstart-guide)
+- [Build & Run Workflow](#build--run-workflow)
 - [Parameters at a Glance](#parameters-at-a-glance)
-- [Multi-Track Performance & KPIs](#multi-track-performance--kpis)
-- [Official Formula Student Penalty Comparison](#official-formula-student-penalty-comparison)
 - [Visualization in Foxglove Studio](#visualization-in-foxglove-studio)
 - [Documentation Suite](#documentation-suite)
 - [Prerequisites & Dependencies](#prerequisites--dependencies)
@@ -29,11 +26,11 @@ Formulated in curvilinear **Frenet-Serret coordinates**, the controller optimize
 ## Key Features
 
 - **Autonomous Racing Line Emergence (MPCC)**: The controller is not constrained to follow the centerline. Driven by speed maximization ($w_v = 4.0$) and mild lateral centering ($q_{ey} = 0.08$), it naturally cuts apexes and exploits the full width of the cone corridor.
-- **Stage-Dependent Cone Corridor Bounds**: Cubic splines fitted to track cones determine the safe lateral corridor $e_y \in [-w_r(s_k) + \text{margin}, w_l(s_k) - \text{margin}]$ at each preview stage, guaranteeing **0 cone strikes**.
+- **Stage-Dependent Cone Corridor Bounds**: Cubic splines fitted to track cones determine the safe lateral corridor $e_y \in [-w_r(s_k) + d_{\mathrm{margin}}, w_l(s_k) - d_{\mathrm{margin}}]$ at each preview stage, guaranteeing 0 cone strikes.
 - **Kamm Friction Circle Grip Capping**: Protects against snap oversteer by capping longitudinal drive force during high-lateral-g cornering:
 
   $$
-  a_{\text{lon,kamm}} = \sqrt{\max\left(0.4,\, (0.92 \mu g)^2 - a_{\text{lat}}^2\right)}
+  a_{\mathrm{lon,kamm}} = \sqrt{\max\left(0.4, (0.92 \mu g)^2 - a_{\mathrm{lat}}^2\right)}
   $$
 
 - **Curvature-Adaptive Speed Envelope & Backward Braking Pass**: Backward integration propagates deceleration from upcoming corners up to 65 m ahead, initiating stable straight-line braking before hairpin turns.
@@ -75,8 +72,7 @@ etdv_mpc/
 │   └── mpc_pacsimlaunch.py     # Launch file for PACSim with controller
 ├── docs/
 │   ├── THEORY.md               # Detailed mathematical modeling and MPCC derivation
-│   ├── PARAMETERS.md           # Exhaustive parameter reference & tuning handbook
-│   └── PERFORMANCE.md          # Multi-track evaluation, timing metrics, and KPIs
+│   └── PARAMETERS.md           # Exhaustive parameter reference & tuning handbook
 └── scripts/
     ├── analyze_multitrack.py   # Cross-track diagnostic & publication dashboard generator
     ├── analyze_run.py          # Single-run diagnostic & parameter advisory engine
@@ -89,26 +85,51 @@ etdv_mpc/
 
 ---
 
-## Quickstart Guide
+## Build & Run Workflow
 
-Inside the Docker development environment:
+### Step 1: Generate acados C Solver Code
+Before compiling the ROS 2 package, generate the C solver source code from the symbolic CasADi model (which reads configuration parameters directly from `config/mpc_params.yaml`):
 
-### 1. Build and Compile
 ```bash
-# Automatically generates C code from python_model and compiles the node
-./build_mpc.sh
+# Ensure acados environment variables are set
+export ACADOS_SOURCE_DIR="${ACADOS_SOURCE_DIR:-/opt/acados}"
+export LD_LIBRARY_PATH="${ACADOS_SOURCE_DIR}/lib:$LD_LIBRARY_PATH"
+
+# Run code generator
+cd python_model
+python3 generate_c_code.py
+cd ..
+```
+*This produces high-performance C files inside `c_generated_code/`.*
+
+### Step 2: Build the ROS 2 Package with Colcon
+From your ROS 2 workspace root:
+
+```bash
+colcon build --packages-select etdv_mpc --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
 ```
 
-### 2. Run Single Track Test (with Live Lap Times)
-```bash
-# Default track or specify track_name
-./run_mpc.sh track_name:=FSG21_dense_centerline.yaml
-```
-*When the run finishes or is interrupted with `Ctrl+C`, a comprehensive diagnostic scorecard is printed to the terminal automatically.*
+### Step 3: Launch Controller with PACSim
+Start simulation and controller:
 
-### 3. Run Universal Multi-Track Benchmark
 ```bash
-python3 scripts/multi_track_sentinel.py --laps 2 --timeout 120
+# Default track (FSE23_dense_centerline.yaml)
+ros2 launch etdv_mpc mpc_pacsimlaunch.py
+
+# Or specify a custom track from pacsim tracks directory
+ros2 launch etdv_mpc mpc_pacsimlaunch.py track_name:=FSG21_dense_centerline.yaml
+```
+
+### Step 4: Telemetry & Performance Diagnostics (Optional)
+In a separate terminal, monitor gate passes and generate post-run performance reports:
+
+```bash
+# Run universal multi-track lap sentinel
+python3 scripts/multi_track_sentinel.py --track FSG21 --laps 2 --timeout 120
+
+# Generate single-run diagnostic scorecard and telemetry plots
+python3 scripts/analyze_run.py --log-dir MPC_logs
 ```
 
 ---
@@ -120,7 +141,7 @@ All parameters are centralized in [`config/mpc_params.yaml`](config/mpc_params.y
 | Parameter | Current Value | Unit | Description |
 | :--- | :---: | :--- | :--- |
 | `control_rate` | `100.0` | Hz | Outer control loop frequency (10.0 ms budget) |
-| `mpc_dt` | `0.05` | s | Horizon discretization step ($N=30 \to 1.5\text{ s}$ preview) |
+| `mpc_dt` | `0.05` | s | Horizon discretization step ($N=30 \to 1.5\mathrm{\ s}$ preview) |
 | `track_margin` | `0.80` | m | Clearance buffer from cone boundaries (unlocks ±0.70 m corridor) |
 | `speed_scale` | `1.00` | - | Empirical curvature limit multiplier (100% grip utilization) |
 | `max_straight_speed` | `25.0` | m/s | Top speed permitted on straightaways (90.0 km/h) |
@@ -133,35 +154,6 @@ All parameters are centralized in [`config/mpc_params.yaml`](config/mpc_params.y
 | `understeer_gradient` | `0.0008` | rad/(m/s²) | Dynamic tire slip angle compensation |
 
 👉 *For the complete reference and tuning guidelines, see the [Parameter Configuration & Tuning Guide](docs/PARAMETERS.md).*
-
----
-
-## Multi-Track Performance & KPIs
-
-Evaluated in a standardized **2-Lap Battery** across three official international circuits:
-
-| Metric | FSE23 (Spain) | FSG21 (Germany) | FSI24 (Italy) | Overall Status |
-| :--- | :---: | :---: | :---: | :---: |
-| **Track Length** | ~298.0 m | ~380.0 m | ~390.0 m | Cross-Track Suite |
-| **Lap 1: Standing Start** | **21.720 s** | **18.451 s** | **30.210 s** | Rapid Launch |
-| **Lap 2: Flying Lap** | **20.830 s** | **17.469 s** | **29.041 s** | **Record Lap Times** |
-| **Total 2-Lap Time** | **42.550 s** | **35.920 s** | **59.251 s** | Consistent |
-| **Flying Top Speed** | **80.2 km/h** | **69.0 km/h** | **87.1 km/h** | Unthrottled Straights |
-| **Flying Avg Speed** | **41.4 km/h** | **45.2 km/h** | **46.8 km/h** | Optimal Pace |
-| **Physical Cone Strikes (DOO)** | **0** | **0** | **0** | **40.0 / 40 Safety Score** |
-| **Minimum Cone Clearance** | **0.750 m** | **0.756 m** | **0.757 m** | **Symmetric Precision** |
-| **Mean acados Solve Time** | **1.38 ms** | **1.32 ms** | **1.43 ms** | **< 15% of 10ms Budget** |
-| **P99 Solver Latency** | **4.40 ms** | **3.82 ms** | **3.92 ms** | Real-Time Deterministic |
-
----
-
-## Official Formula Student Penalty Comparison
-
-In Formula Student regulations, each cone knocked down (**DOO - Down or Out**) incurs a **+2.0 s penalty**:
-
-- **FSE23**: from 53.19 s (crash with 14 cones in unconstrained MPCC) $\to$ **20.830 s clean** (**-32.36 s gain**).
-- **FSG21**: from 32.87 s (16.87s + 16s for 8 cones) $\to$ **17.469 s clean** (**-15.40 s gain**).
-- **FSI24**: from 29.72 s (27.72s + 2s for 1 cono) $\to$ **29.041 s clean** (**-0.68 s gain**).
 
 ---
 
@@ -179,7 +171,6 @@ The controller publishes high-rate visualization markers:
 
 - 📖 **[Mathematical Theory & OCP Formulation](docs/THEORY.md)**: Mathematical derivation of the Frenet frame equations, emergent racing line proof, soft friction circle slacks, and SQP-RTI solver details.
 - ⚙️ **[Parameter Configuration & Tuning Guide](docs/PARAMETERS.md)**: Exhaustive breakdown of every parameter in `mpc_params.yaml`, physical units, and category-by-category tuning explanations.
-- 📊 **[Track Performance & Evaluation](docs/PERFORMANCE.md)**: Official multi-track benchmark results across FSE23, FSG21, and FSI24, solver timing distributions, and telemetry tools.
 
 ---
 
