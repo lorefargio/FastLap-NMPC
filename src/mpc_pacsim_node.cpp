@@ -379,6 +379,11 @@ void MPCPacsimNode::controlLoop() {
     if (a_lat_est > 5.0) {
         double a_lat_safe = std::min(a_lat_est, mu_g * 0.92);
         double a_lon_kamm = std::sqrt(std::max(0.4, (mu_g * 0.92) * (mu_g * 0.92) - a_lat_safe * a_lat_safe));
+        // Anti-stall floor: Kamm capping against snap oversteer is only relevant at high speed corner exits.
+        // At low speeds (v < 5.0 m/s), enforce a minimum floor of low_speed_max_accel so the car is never torque-starved.
+        if (current_speed_ < 5.0) {
+            a_lon_kamm = std::max(a_lon_kamm, low_speed_max_accel_);
+        }
         a_eff_max = std::min(a_eff_max, a_lon_kamm);
     }
 
@@ -433,8 +438,11 @@ void MPCPacsimNode::controlLoop() {
         double wl_k = track_.getLeftWidth(s_k);
         double wr_k = track_.getRightWidth(s_k);
 
+        // Natural geometric steering reference matches road curvature, eliminating corner-entry understeer lag
+        double delta_ref_k = std::clamp(std::atan(1.53 * kappa_k), -0.52, 0.52);
+
         solver_.setStageParameters(k, kappa_k, wl_k, wr_k, mu_k);
-        solver_.setStageReference(k, v_ref_k, 0.0, 0.0, 0.0, 0.0, 0.0);
+        solver_.setStageReference(k, v_ref_k, 0.0, 0.0, delta_ref_k, 0.0, 0.0);
 
         if (k < MPC_N) {
             solver_.setStageControlBounds(k, min_accel_, a_eff_max, -1.5, 1.5);

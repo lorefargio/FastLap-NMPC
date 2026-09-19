@@ -153,11 +153,19 @@ double SpeedGovernor::computeSafeSpeed(double kappa) const {
     }
 
     // 2. Sharp hairpins (k > table max, R < 9.13m):
-    // Transition smoothly using mechanical tire grip limit: v = sqrt(ay_base / k)
-    // At k = 0.109589, ay_base = 10.3028^2 * 0.109589 = 11.632 m/s^2 (1.185g)
+    // Transition smoothly using mechanical tire grip limit: v = sqrt(ay_eff / k).
+    // For ordinary tight curves (k <= 0.30, R >= 3.3m), maintain full empirical baseline (11.632 m/s^2).
+    // Only for extreme hairpins beyond physical steering lock capability (k > 0.30, R < 3.3m),
+    // excessive tire slip angle reduces effective lateral grip towards pure mechanical grip (~9.42 m/s^2).
     if (k >= speed_table_.back().first) {
         constexpr double ay_base = 11.632;
-        double v_phys = std::sqrt(ay_base / k);
+        constexpr double ay_mech = 9.81 * 0.96; // 9.42 m/s^2 (0.96g mechanical grip)
+        double ay_eff = ay_base;
+        if (k > 0.30) {
+            double blend = std::clamp((k - 0.30) / 0.15, 0.0, 1.0);
+            ay_eff = ay_base - blend * (ay_base - ay_mech);
+        }
+        double v_phys = std::sqrt(ay_eff / k);
         return v_phys * speed_scale_;
     }
 
@@ -264,15 +272,21 @@ double SpeedGovernor::computeEffectiveMaxAccel(
     }
 
     // 3. Progressive corner-exit derating based on steering angle (smooth friction circle approximation)
-    // When wheels are straight (steer_norm = 0), full acceleration is available.
-    // When wheels are turned in a corner (steer_norm > 0), acceleration is progressively throttled.
+    // Steering derating protects against snap oversteer at medium/high cornering speeds.
+    // At crawl speeds (v < 2.5 m/s), lateral g is negligible (< 0.5 m/s^2), so derating is
+    // phased out to prevent vehicle stall against tire scrub resistance.
+    double speed_derate_weight = std::clamp((current_speed - 1.2) / 3.0, 0.0, 1.0);
+    double effective_derate = steer_derate * speed_derate_weight;
     double steer_norm = std::clamp(std::abs(steering_angle) / max_steer, 0.0, 1.0);
-    double traction_factor = std::clamp(1.0 - steer_derate * (steer_norm * steer_norm), 0.30, 1.0);
+    double traction_factor = std::clamp(1.0 - effective_derate * (steer_norm * steer_norm), 0.30, 1.0);
 
-    double low_speed_target = low_speed_max_accel + (full_max_accel - low_speed_max_accel) * (1.0 - steer_norm);
+    double low_speed_target = low_speed_max_accel + (full_max_accel - low_speed_max_accel) * (1.0 - steer_norm * speed_derate_weight);
     double a_eff = low_speed_target + speed_ratio * (full_max_accel - low_speed_target);
 
-    return std::clamp(a_eff * traction_factor, low_speed_max_accel * 0.5, full_max_accel);
+    double a_result = a_eff * traction_factor;
+    // Anti-stall floor at crawl speed ensures vehicle always has enough torque to roll through tight turns
+    double min_floor = (current_speed < 2.5) ? low_speed_max_accel : (low_speed_max_accel * 0.5);
+    return std::clamp(a_result, min_floor, full_max_accel);
 }
 
 std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
@@ -299,21 +313,37 @@ std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
     bool use_corridor = (!free_widths.empty() && free_widths.size() >= M);
 
     for (size_t i = 0; i < M; ++i) {
-        double k_eff = std::abs(kappas[i]);
+        double k_raw = kappas[i];
+        double k_eff = std::abs(k_raw);
         if (use_corridor && free_widths[i] > 0.05 && k_eff > 1e-4) {
             double w_free = std::clamp(free_widths[i], 0.0, 0.85);
+            // In extreme hairpins (k > 0.25, R < 4.0m), vehicle steering lock limits achievable apex cut
+            if (k_eff > 0.25) {
+                double tight_blend = std::clamp((k_eff - 0.25) / 0.15, 0.0, 1.0);
+                w_free *= (1.0 - 0.70 * tight_blend);
+            }
             k_eff = k_eff / (1.0 + k_eff * w_free);
         }
         v_prof[i] = computeSafeSpeed(k_eff);
     }
 
     // 2. Backward Braking Pass:
-    // Ensures vehicle begins braking on straight ahead of an upcoming corner:
-    // v[i] <= sqrt(v[i+1]^2 + 2 * a_brake * ds)
+    // Ensures vehicle begins braking on straight ahead of an upcoming corner.
+    // For ordinary curves and straights (k <= 0.25, R >= 4.0m), full braking deceleration (5.0 m/s^2)
+    // is available, guaranteeing late and aggressive braking zones across FSE23, FSG21, and FSI24.
+    // For extreme hairpins (k > 0.25), smooth scaling anticipates braking into the hairpin apex.
     for (size_t i = M - 1; i > 0; --i) {
         size_t prev = i - 1;
         double ds = std::max(s_stages[i] - s_stages[prev], 0.01);
-        double v_max_brake = std::sqrt(v_prof[i] * v_prof[i] + 2.0 * a_brake * ds);
+
+        double k_i = std::abs(kappas[i]);
+        double a_brake_eff = a_brake;
+        if (k_i > 0.25) {
+            double k_blend = std::clamp((k_i - 0.25) / 0.20, 0.0, 1.0);
+            a_brake_eff = a_brake * (1.0 - 0.45 * k_blend); // Scales smoothly from 5.0 down to 2.75 m/s^2 for k >= 0.45
+        }
+
+        double v_max_brake = std::sqrt(v_prof[i] * v_prof[i] + 2.0 * a_brake_eff * ds);
         if (v_max_brake < v_prof[prev]) {
             v_prof[prev] = v_max_brake;
         }
