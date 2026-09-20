@@ -154,15 +154,16 @@ double SpeedGovernor::computeSafeSpeed(double kappa) const {
 
     // 2. Sharp hairpins (k > table max, R < 9.13m):
     // Transition smoothly using mechanical tire grip limit: v = sqrt(ay_eff / k).
-    // For ordinary tight curves (k <= 0.30, R >= 3.3m), maintain full empirical baseline (11.632 m/s^2).
-    // Only for extreme hairpins beyond physical steering lock capability (k > 0.30, R < 3.3m),
-    // excessive tire slip angle reduces effective lateral grip towards pure mechanical grip (~9.42 m/s^2).
+    // For all curves achievable within vehicle steering lock (k <= 0.38, R >= 2.63m),
+    // maintain full empirical baseline (11.632 m/s^2), preserving maximum speed on FSE23, FSG21, FSI24.
+    // Only for extreme hairpins beyond physical steering lock (k > 0.38, R < 2.63m, e.g. FSG23),
+    // blend effective lateral grip smoothly towards pure mechanical grip (~9.42 m/s^2).
     if (k >= speed_table_.back().first) {
         constexpr double ay_base = 11.632;
         constexpr double ay_mech = 9.81 * 0.96; // 9.42 m/s^2 (0.96g mechanical grip)
         double ay_eff = ay_base;
-        if (k > 0.30) {
-            double blend = std::clamp((k - 0.30) / 0.15, 0.0, 1.0);
+        if (k > 0.38) {
+            double blend = std::clamp((k - 0.38) / 0.10, 0.0, 1.0);
             ay_eff = ay_base - blend * (ay_base - ay_mech);
         }
         double v_phys = std::sqrt(ay_eff / k);
@@ -317,9 +318,10 @@ std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
         double k_eff = std::abs(k_raw);
         if (use_corridor && free_widths[i] > 0.05 && k_eff > 1e-4) {
             double w_free = std::clamp(free_widths[i], 0.0, 0.85);
-            // In extreme hairpins (k > 0.25, R < 4.0m), vehicle steering lock limits achievable apex cut
-            if (k_eff > 0.25) {
-                double tight_blend = std::clamp((k_eff - 0.25) / 0.15, 0.0, 1.0);
+            // In extreme hairpins beyond physical steering lock (k > 0.38, R < 2.63m),
+            // steering geometry limits achievable apex cut inside the corridor
+            if (k_eff > 0.38) {
+                double tight_blend = std::clamp((k_eff - 0.38) / 0.12, 0.0, 1.0);
                 w_free *= (1.0 - 0.70 * tight_blend);
             }
             k_eff = k_eff / (1.0 + k_eff * w_free);
@@ -328,19 +330,37 @@ std::vector<double> SpeedGovernor::computeFeasibleSpeedProfile(
     }
 
     // 2. Backward Braking Pass:
-    // Ensures vehicle begins braking on straight ahead of an upcoming corner.
-    // For ordinary curves and straights (k <= 0.25, R >= 4.0m), full braking deceleration (5.0 m/s^2)
-    // is available, guaranteeing late and aggressive braking zones across FSE23, FSG21, and FSI24.
-    // For extreme hairpins (k > 0.25), smooth scaling anticipates braking into the hairpin apex.
+    // Pre-scan preview horizon for upcoming extreme hairpins beyond vehicle steering lock (k > 0.38 m^-1)
+    // Find the apex (stage of maximum curvature in the extreme hairpin)
+    int hairpin_apex_idx = -1;
+    double max_hairpin_k = 0.38;
+    for (size_t j = 0; j < M; ++j) {
+        double kj = std::abs(kappas[j]);
+        if (kj > max_hairpin_k) {
+            max_hairpin_k = kj;
+            hairpin_apex_idx = static_cast<int>(j);
+        }
+    }
+    double s_hairpin_apex = (hairpin_apex_idx >= 0) ? s_stages[hairpin_apex_idx] : -1.0;
+
     for (size_t i = M - 1; i > 0; --i) {
         size_t prev = i - 1;
         double ds = std::max(s_stages[i] - s_stages[prev], 0.01);
 
-        double k_i = std::abs(kappas[i]);
+        double k_seg = std::max(std::abs(kappas[i]), std::abs(kappas[prev]));
         double a_brake_eff = a_brake;
-        if (k_i > 0.25) {
-            double k_blend = std::clamp((k_i - 0.25) / 0.20, 0.0, 1.0);
-            a_brake_eff = a_brake * (1.0 - 0.45 * k_blend); // Scales smoothly from 5.0 down to 2.75 m/s^2 for k >= 0.45
+
+        // Trail-braking derating: active ONLY when approaching an upcoming extreme hairpin (k > 0.38)
+        // within a 22-meter braking corridor, AND currently propagating through a curved segment (k_seg > 0.06).
+        // On straight approach segments (k_seg <= 0.06), full braking (5.0 m/s^2) is used, forcing deceleration
+        // to initiate early on the preceding straightaway.
+        // 100% INACTIVE on FSE23 (k_max=0.36), FSG21 (k_max=0.25), and FSI24 (k_max=0.20).
+        if (hairpin_apex_idx >= 0 && static_cast<int>(i) <= hairpin_apex_idx) {
+            double dist_to_hairpin = s_hairpin_apex - s_stages[i];
+            if (dist_to_hairpin >= -1.0 && dist_to_hairpin <= 22.0 && k_seg > 0.06) {
+                double k_blend = std::clamp((k_seg - 0.06) / 0.10, 0.0, 1.0);
+                a_brake_eff = a_brake * (1.0 - 0.55 * k_blend); // Derates smoothly down to ~2.25 m/s^2 in curve
+            }
         }
 
         double v_max_brake = std::sqrt(v_prof[i] * v_prof[i] + 2.0 * a_brake_eff * ds);

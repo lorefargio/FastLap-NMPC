@@ -445,7 +445,13 @@ void MPCPacsimNode::controlLoop() {
         solver_.setStageReference(k, v_ref_k, 0.0, 0.0, delta_ref_k, 0.0, 0.0);
 
         if (k < MPC_N) {
-            solver_.setStageControlBounds(k, min_accel_, a_eff_max, -1.5, 1.5);
+            double stage_min_accel = min_accel_;
+            if (current_speed_ < 3.5 && !this->get_parameter("emergency_stop").as_bool()) {
+                // Low-speed deceleration floor: prevents panic braking from stalling the car in tight corners
+                double v_ratio = std::clamp(current_speed_ / 3.5, 0.0, 1.0);
+                stage_min_accel = -2.0 - v_ratio * (std::abs(min_accel_) - 2.0);
+            }
+            solver_.setStageControlBounds(k, stage_min_accel, a_eff_max, -1.5, 1.5);
         }
 
         if (k > 0 && k < MPC_N) {
